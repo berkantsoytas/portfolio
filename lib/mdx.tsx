@@ -1,5 +1,6 @@
 import { MDXRemote, type MDXRemoteProps } from "next-mdx-remote/rsc";
 import rehypePrettyCode from "rehype-pretty-code";
+import remarkGfm from "remark-gfm";
 import type { ComponentProps, ReactNode } from "react";
 
 const prettyCodeOptions = {
@@ -71,6 +72,7 @@ export async function renderMDX(content: string) {
       components={components as MDXRemoteProps["components"]}
       options={{
         mdxOptions: {
+          remarkPlugins: [remarkGfm],
           rehypePlugins: [
             [rehypePrettyCode, prettyCodeOptions],
           ],
