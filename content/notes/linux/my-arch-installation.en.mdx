@@ -1,0 +1,404 @@
+---
+title: "My Arch Installation Settings"
+date: "2026-07-11"
+tags: ["linux", "cachyos", "installation_guide", "nvidia", "systemd-boot"]
+---
+
+# Arch Linux Installation Notes
+
+> **System**: Lenovo Yoga Creator i7
+> **OS**: Arch Linux
+> **Kernel**: linux-cachyos
+> **Boot Loader**: systemd-boot
+> **GPU Driver**: NVIDIA 580.173.02
+
+---
+
+## 1. USB Preparation
+
+Download Arch ISO from [archlinux.org/download](https://archlinux.org/download/).
+
+Write the ISO to Ventoy:
+
+```bash
+cp ~/Downloads/archlinux-2026.07.01-x86_64.iso /media/ventoy/
+```
+
+Boot from the Ventoy USB → Select the Arch ISO.
+
+---
+
+## 2. Boot & Keyboard
+
+```bash
+loadkeys trq
+```
+
+---
+
+## 3. Connect to Internet (iwd)
+
+```bash
+iwctl
+
+[iwd]# device list
+[iwd]# station wlan0 scan
+[iwd]# station wlan0 get-networks
+[iwd]# station wlan0 connect "SSID_NAME"
+
+[iwd]# exit
+```
+
+Verify connection:
+
+```bash
+ping -c 4 archlinux.org
+```
+
+---
+
+## 4. System Clock
+
+```bash
+timedatectl set-ntp true
+timedatectl status
+```
+
+---
+
+## 5. Disk Partitioning
+
+> **Layout**: 1GB EFI boot / 16GB swap / remaining ext4 root
+
+Identify the target disk:
+
+```bash
+lsblk
+```
+
+Partition with cfdisk (interactive, easy):
+
+```bash
+cfdisk /dev/nvme0n1
+```
+
+**cfdisk steps:**
+
+| Step                        | Action                                       |
+| --------------------------- | -------------------------------------------- |
+| Select GPT label            | Select `[gpt]`                                |
+| Partition 1 (EFI)           | `[New]` → size: `1G` → type: `EFI System`    |
+| Partition 2 (Swap)          | `[New]` → size: `16G` → type: `Linux swap`   |
+| Partition 3 (Root)          | `[New]` → size: (rest) → type: `Linux filesystem` |
+| Write & exit                | `[Write]` → `yes` → `[Quit]`                 |
+
+---
+
+## 6. Formatting
+
+```bash
+mkfs.fat -F32 /dev/nvme0n1p1
+
+mkswap /dev/nvme0n1p2
+
+mkfs.ext4 /dev/nvme0n1p3
+```
+
+---
+
+## 7. Mounting
+
+```bash
+mount /dev/nvme0n1p3 /mnt
+
+mount --mkdir /dev/nvme0n1p1 /mnt/boot
+
+swapon /dev/nvme0n1p2
+```
+
+---
+
+## 8. CachyOS Repo & Base Installation
+
+Install both the **stock Arch kernel** (`linux`) and **CachyOS kernel** (`linux-cachyos`). CachyOS is optimized for better desktop performance; the stock kernel stays as a fallback.
+
+First, add the CachyOS repository:
+
+```bash
+pacman -Sy
+pacman -S --noconfirm archlinux-keyring
+
+pacman -S --noconfirm cachyos-keyring
+```
+
+Add the CachyOS repo config (manual):
+
+```bash
+cat >> /etc/pacman.conf << 'EOF'
+[cachyos]
+Server = https://mirror.cachyos.org/repo/x86_64/$repo
+SigLevel = Optional TrustAll
+EOF
+```
+
+Install the base system (`-K` optimizes the kernel for your hardware):
+
+```bash
+pacstrap -K /mnt base base-devel \
+  linux linux-headers \
+  linux-cachyos linux-cachyos-headers \
+  linux-firmware sof-firmware cachyos-mirrorlist \
+  amd-ucode intel-ucode \
+  iwd networkmanager \
+  vim nano sudo fish firefox \
+  git htop btop neofetch \
+  sddm plasma-desktop \
+  dolphin konsole kate
+```
+
+> `intel-ucode` — Intel processor microcode updates.
+> `sof-firmware` — Intel audio (Sound Open Firmware) support.
+> `plasma-desktop` — KDE desktop environment.
+> `sddm` — KDE's display manager.
+
+---
+
+## 9. fstab
+
+```bash
+genfstab -U /mnt >> /mnt/etc/fstab
+cat /mnt/etc/fstab  # verify
+```
+
+---
+
+## 10. Chroot
+
+```bash
+arch-chroot /mnt
+```
+
+We are now inside the chroot environment.
+
+---
+
+## 11. Time Zone
+
+```bash
+ln -sf /usr/share/zoneinfo/Europe/Istanbul /etc/localtime
+hwclock --systohc
+```
+
+---
+
+## 12. Language & Localization
+
+```bash
+sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+sed -i 's/^#tr_TR.UTF-8/tr_TR.UTF-8/' /etc/locale.gen
+locale-gen
+
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "KEYMAP=trq" > /etc/vconsole.conf
+```
+
+---
+
+## 13. Hostname
+
+The hostname identifies your machine on the network. The `hosts` file is required for localhost resolution — without it some applications (e.g., X11, sudo) may experience delays.
+
+```bash
+echo "yoga-arch" > /etc/hostname
+
+cat >> /etc/hosts << 'EOF'
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   yoga-arch.localdomain yoga-arch
+EOF
+```
+
+---
+
+## 14. Network Configuration
+
+> iwd is only used to connect to WiFi during the ISO installation. After the system is installed, NetworkManager handles everything.
+
+```bash
+systemctl enable NetworkManager
+```
+
+---
+
+## 15. initramfs
+
+```bash
+sed -i 's/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+
+mkinitcpio -P
+```
+
+---
+
+## 16. Root Password
+
+```bash
+passwd
+```
+
+---
+
+## 17. Bootloader — systemd-boot
+
+```bash
+bootctl install
+```
+
+**Create the bootloader entry.** We identify the root partition by PARTUUID — even if the disk order changes (e.g., `/dev/nvme0n1p3` → `/dev/sda1`), the system will still boot.
+
+```bash
+cat > /boot/loader/entries/arch.conf << 'EOF'
+title   Arch Linux (CachyOS)
+linux   /vmlinuz-linux-cachyos
+initrd  /intel-ucode.img
+initrd  /initramfs-linux-cachyos.img
+options root=PARTUUID=<ROOT_PARTUUID> rw nvidia_drm.modeset=1
+EOF
+```
+
+> The `linux` line uses the `linux-cachyos` kernel. You can also add `vmlinuz-linux` as a fallback entry.
+
+**Find PARTUUID and paste it into `arch.conf`:**
+
+```bash
+blkid -s PARTUUID -o value /dev/nvme0n1p3
+
+```
+
+Optionally verify the installation with:
+
+```bash
+bootctl status
+```
+
+**Loader config:**
+
+```bash
+cat > /boot/loader/loader.conf << 'EOF'
+default arch.conf
+timeout 4
+editor no
+EOF
+```
+
+---
+
+## 18. NVIDIA Driver Installation (580.173.02)
+
+```bash
+pacman -S nvidia-dkms nvidia-utils nvidia-settings nvidia-prime
+```
+
+Verify the driver version:
+
+```bash
+modinfo nvidia | grep ^version
+```
+
+> Current version: **580.173.02**
+
+### NVIDIA Kernel Parameters
+
+Added to the `options` line in `/boot/loader/entries/arch.conf`:
+
+```
+nvidia_drm.modeset=1
+```
+
+### NVIDIA Hook (mkinitcpio)
+
+Already added in `/etc/mkinitcpio.conf`:
+
+```
+MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+```
+
+---
+
+## 19. User Creation
+
+```bash
+useradd -m -G wheel,audio,video,input,storage -s /usr/bin/fish berkant
+passwd berkant
+
+echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
+```
+
+---
+
+## 20. KDE Plasma & SDDM
+
+Enable SDDM display manager and KDE Plasma desktop:
+
+```bash
+systemctl enable sddm
+```
+
+SDDM theme and user list config (`/etc/sddm.conf.d/`):
+
+```bash
+mkdir -p /etc/sddm.conf.d
+cat > /etc/sddm.conf.d/theme.conf << 'EOF'
+[Theme]
+Current=breeze
+EOF
+```
+
+---
+
+## 21. Kernel Updates
+
+Both kernels are updated via pacman:
+
+```bash
+pacman -Syu
+
+pacman -S linux linux-headers linux-cachyos linux-cachyos-headers
+```
+
+---
+
+## 22. Completion
+
+```bash
+exit
+
+umount -R /mnt
+
+reboot
+```
+
+---
+
+## Summary: Partition Layout
+
+| Partition       | Size   | Type        | Mount Point |
+| --------------- | ------ | ----------- | ----------- |
+| `/dev/nvme0n1p1` | 1GB  | EFI (FAT32) | `/boot`     |
+| `/dev/nvme0n1p2` | 16GB | Swap        | —           |
+| `/dev/nvme0n1p3` | Rest | ext4        | `/`         |
+
+## Summary: Software Choices
+
+| Component       | Selection                          |
+| --------------- | ---------------------------------- |
+| ISO Writer      | Ventoy                             |
+| Distribution    | Arch Linux                         |
+| Kernel          | CachyOS (`linux-cachyos`)          |
+| Network (setup) | `iwd`                              |
+| Network (daily) | NetworkManager                     |
+| GPU Driver      | NVIDIA 580.173.02 (`nvidia-dkms`)  |
+| Bootloader      | systemd-boot                       |
+| Disk Format     | ext4 (root), FAT32 (EFI)           |
+| Shell           | fish                               |
+| Editor          | vim / nano                         |

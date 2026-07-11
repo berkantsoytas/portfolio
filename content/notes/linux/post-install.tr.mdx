@@ -1,0 +1,319 @@
+---
+title: "Kurulum Sonrası Yapılandırma"
+date: "2026-07-11"
+tags: ["linux", "post-install", "kde", "optimization"]
+---
+
+# Kurulum Sonrası Kişiselleştirme
+
+Arch Linux + KDE Plasma kurulumu tamamlandıktan sonra yaptığım adımlar.
+
+---
+
+## 1. Paru (AUR Helper)
+
+Paru, AUR'dan paket kurmayı kolaylaştıran bir pacman wrapper'ıdır.
+
+```bash
+sudo pacman -S --needed git base-devel
+
+git clone https://aur.archlinux.org/paru.git
+cd paru
+makepkg -si
+```
+
+Kullanım:
+
+```bash
+paru <paket-adı>
+
+paru -S <paket-adı>
+
+paru
+```
+
+> `paru` default olarak `sudo pacman -Syu` ile aynı işi yapar + AUR paketlerini de günceller. Tek komutla her şey güncel.
+
+---
+
+## 2. Ayna Optimizasyonu (reflector + cachyos-rate-mirrors)
+
+Hızlı ve güncel aynalar (mirror) hem `pacman` hem de `paru` için kritik. İki araç kullanılır:
+
+- `reflector` — Arch Linux resmi aynalarını listeler, hıza göre sıralar, `mirrorlist`'i günceller.
+- `cachyos-rate-mirrors` — CachyOS'un kendi ayna benchmark aracı. Daha agresif sıralar, CachyOS repo'su için de uygundur.
+
+```bash
+sudo pacman -S reflector
+
+sudo pacman -S cachyos-rate-mirrors
+```
+
+### reflector ile mirrorlist güncelleme
+
+```bash
+sudo reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+```
+
+### reflector timer (otomatik güncelleme)
+
+```bash
+sudo systemctl enable --now reflector.timer
+```
+
+Haftada bir `reflector` otomatik çalışır ve mirrorlist'i günceller.
+
+### cachyos-rate-mirrors
+
+```bash
+sudo cachyos-rate-mirrors
+```
+
+Bu komut CachyOS aynalarını hız testine sokar ve `/etc/pacman.d/cachyos-mirrorlist`'i günceller.
+
+> **Sıralama**: Önce `cachyos-rate-mirrors` (CachyOS aynaları), ardından `reflector` (Arch aynaları) çalıştırılır. İkisi birlikte tüm repolar için optimum hız sağlar.
+
+---
+
+## 3. EasyEffects (Ses İyileştirme)
+
+EasyEffects, PipeWire üzerinde çalışan bir ses efektleri uygulamasıdır. Özellikle dizüstü bilgisayar hoparlörlerinde ses kalitesini belirgin şekilde artırır.
+
+```bash
+sudo pacman -S easyeffects
+
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/JackHack96/EasyEffects-Presets/master/install.sh)"
+```
+
+Kurulumdan sonra:
+1. EasyEffects'i aç
+2. Kullanmak istediğin preseti **Import** et (ör. "Sparky" veya "Rock music" gibi)
+3. Preseti etkinleştir
+4. Uygulamanın otomatik başlaması için `~/.config/autostart/`a ekle veya KDE Sistem Ayarları → Otomatik Başlangıç'a ekle
+
+PipeWire zaten KDE ile birlikte gelir, ekstra kurulum gerekmez.
+
+### WirePlumber — sof-firmware soft-mixer workaround
+
+sof-firmware kronik olarak bazı Intel ses kartlarında donanım mixer'ını düzgün desteklemez. Çözüm: ALSA soft-mixer'ı WirePlumber üzerinden etkinleştirmek.
+
+```bash
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d/
+```
+
+`~/.config/wireplumber/wireplumber.conf.d/51-output-soft-mixer.conf`:
+
+```conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      {
+        device.name = "~alsa_card.*"
+      }
+    ]
+    actions = {
+      update-props = {
+        api.alsa.soft-mixer = true
+      }
+    }
+  }
+]
+```
+
+```bash
+systemctl --user restart wireplumber
+```
+
+> Bu config tüm ALSA kartlarında donanım mixer'ı yazılım mixer'ı ile değiştirir. Ses seviyesi kontrolü çalışmıyorsa (ör. `amixer` veya KMix'ten ayarlanamıyorsa) bu düzeltir.
+
+---
+
+## 4. Firewalld (Güvenlik Duvarı)
+
+Firewalld, dinamik bir güvenlik duvarı yönetim aracıdır. Varsayılan olarak tüm gelen bağlantıları engeller.
+
+```bash
+sudo pacman -S firewalld
+
+sudo systemctl enable --now firewalld
+
+sudo firewall-cmd --state
+```
+
+Temel kurallar:
+
+```bash
+sudo firewall-cmd --get-default-zone
+
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --reload
+
+sudo firewall-cmd --permanent --add-service=kdeconnect
+sudo firewall-cmd --reload
+```
+
+> `--permanent` flag'i kuralı kalıcı yapar. `--reload` ile aktif hale gelir.
+
+---
+
+## 5. Timeshift (Sistem Yedeği)
+
+Timeshift, sistem anlık görüntüleri (snapshot) alarak geri dönüş noktaları oluşturur. Grub kullanmıyorum ama systemd-boot ile de çalışır (Btrfs veya RSYNC modunda).
+
+```bash
+sudo pacman -S timeshift
+```
+
+Kurulum sonrası:
+1. Timeshift'i aç
+2. Snapshot türü seç: **RSYNC** (ext4 için önerilen)
+3. Hedef disk/bölüm seç (genelde root bölümü)
+4. Zamanlama ayarla (ör. günlük, haftalık, aylık)
+5. İlk snapshot'ı manuel al: `[Create]`
+
+```bash
+sudo timeshift --create --comments "ilk kurulum sonrası"
+
+sudo timeshift --list
+
+sudo timeshift --restore
+```
+
+### systemd ile Otomatik Snapshot (AUR'suz, Sandboxed)
+
+AUR'daki `timeshift-autosnap` gibi paketlere bel bağlamak yerine, systemd timer/servis çifti ile kendi otomasyonunu yaz. Üstelik servisler **PrivateNetwork**, **CapabilityBoundingSet** gibi flag'lerle sandbox'lanır — root yetkileri bile budanır, internet erişimi tamamen kesilir.
+
+**1. Saatlik zamanlayıcı:**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-hourly.timer > /dev/null << 'EOF'
+[Unit]
+Description=Hourly Timeshift check for snapshots
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+**2. Saatlik servis (sandboxed):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-hourly.service > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift Snapshots
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/timeshift --check --scripted
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+EOF
+```
+
+**3. Açılış zamanlayıcı (boot'tan 10 dk sonra):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-boot.timer > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift boot snapshot
+
+[Timer]
+OnBootSec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+**4. Açılış servisi (sandboxed):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-boot.service > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift Boot Snapshot
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/timeshift --create --scripted --tags B
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+EOF
+```
+
+**5. Aktif et:**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now timeshift-hourly.timer
+sudo systemctl enable --now timeshift-boot.timer
+```
+
+Dosyalar `/etc/systemd/system/` altında durur — sistem güncellemelerinde asla ezilmez.
+
+> Timeshift snapshot'ları genelde `/timeshift/` dizininde saklanır. Yedeklerin fazla yer kaplamaması için eski snapshot'ları temizlemeyi unutma.
+
+---
+
+## 6. Fstrim (SSD TRIM)
+
+SSD'lerde performans ve ömür için düzenli TRIM gerekir. `fstrim.timer` ile haftada bir otomatik yapılır.
+
+```bash
+sudo systemctl enable --now fstrim.timer
+
+systemctl status fstrim.timer
+
+sudo fstrim -av
+```
+
+---
+
+## 7. Diğer Sistem İyileştirmeleri
+
+### Sysctl tweaks
+
+```bash
+cat >> /etc/sysctl.d/99-performance.conf << 'EOF'
+vm.swappiness=10
+
+fs.inotify.max_user_watches=524288
+
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+```
+
+### GRUB yok — systemd-boot ile varsayılan çekirdeği seç
+
+```bash
+```
+
+İki çekirdek varsa (`linux` ve `linux-cachyos`), ikisi de `bootctl list` ile görünür. Varsayılanı `/boot/loader/loader.conf` içinde `default` satırından değiştirebilirsin.
+
+---
+
+## 8. Özet
+
+| Bileşen | Amaç |
+|---------|------|
+| `paru` | AUR paket yöneticisi |
+| `easyeffects` | Ses iyileştirme (preset: JackHack96) |
+| `firewalld` | Güvenlik duvarı |
+| `timeshift` | Sistem yedeği/snapshot |
+| `fstrim.timer` | Haftalık SSD TRIM |
+| `sysctl` | Kernel parametreleri (swappiness, BBR, inotify) |

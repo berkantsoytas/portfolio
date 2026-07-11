@@ -24,5 +24,14 @@
     "children": [
       { "name": "utility-types", "slug": "utility-types", "type": "file" }
     ]
+  },
+  {
+    "name": "Linux",
+    "slug": "linux",
+    "type": "folder",
+    "children": [
+      { "name": "my-arch-installation", "slug": "my-arch-installation", "type": "file" },
+      { "name": "post-install", "slug": "post-install", "type": "file" }
+    ]
   }
 ]

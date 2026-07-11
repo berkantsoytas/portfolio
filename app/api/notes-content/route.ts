@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getNoteContent, type Locale } from "@/lib/content";
+import { markdownToHtml } from "@/lib/markdown-html";
 
 export async function GET(request: NextRequest) {
   const slug = request.nextUrl.searchParams.get("slug");
@@ -14,5 +15,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  return NextResponse.json(note);
+  const { html, headings } = await markdownToHtml(note.content);
+
+  return NextResponse.json({
+    frontmatter: note.frontmatter,
+    html,
+    headings,
+  });
 }

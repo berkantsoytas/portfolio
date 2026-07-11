@@ -8,8 +8,10 @@ import GraphView from "@/components/GraphView";
 import AnimationGallery from "@/components/AnimationGallery";
 import type { NoteNode } from "@/lib/content";
 
-function NoteContent({ slug }: { slug: string }) {
-  const [mdContent, setMdContent] = useState<string | null>(null);
+type Heading = { level: number; text: string; id: string };
+
+function NoteContent({ slug, onHeadings }: { slug: string; onHeadings?: (headings: Heading[]) => void }) {
+  const [htmlContent, setHtmlContent] = useState<string | null>(null);
   const [title, setTitle] = useState<string>("");
   const [error, setError] = useState(false);
   const { locale } = useI18n();
@@ -18,148 +20,41 @@ function NoteContent({ slug }: { slug: string }) {
   useEffect(() => {
     slugRef.current = slug;
     setTitle("");
-    // Don't reset mdContent/error synchronously — let stale responses get ignored
+    setHtmlContent(null);
+    setError(false);
     fetch(`/api/notes-content?slug=${slug}&locale=${locale}`)
       .then((r) => r.json())
       .then((data) => {
-        if (slugRef.current !== slug) return; // stale response
+        if (slugRef.current !== slug) return;
         if (data.error) {
           setError(true);
-          setMdContent(null);
         } else {
           setTitle((data.frontmatter?.title as string) ?? slug);
-          setMdContent(data.content as string);
+          setHtmlContent(data.html as string);
+          onHeadings?.((data.headings ?? []) as Heading[]);
         }
       })
       .catch(() => {
         if (slugRef.current === slug) setError(true);
       });
-  }, [slug, locale]);
+  }, [slug, locale, onHeadings]);
 
   if (error)
     return (
       <p className="font-mono text-sm text-foreground-dim">Note not found.</p>
     );
-  if (!mdContent)
+  if (!htmlContent)
     return <p className="font-mono text-sm text-foreground-dim">Loading...</p>;
-
-  const lines = mdContent.split("\n");
-  let inCodeBlock = false;
-  const renderedLines: {
-    type: string;
-    content: string;
-    key: number;
-    code?: string[];
-  }[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.startsWith("```")) {
-      if (inCodeBlock) {
-        inCodeBlock = false;
-      } else {
-        inCodeBlock = true;
-        const code: string[] = [];
-        let j = i + 1;
-        while (j < lines.length && !lines[j].startsWith("```")) {
-          code.push(lines[j]);
-          j++;
-        }
-        renderedLines.push({ type: "code", content: "", key: i, code });
-        i = j;
-      }
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      renderedLines.push({
-        type: "h2",
-        content: line.replace("## ", ""),
-        key: i,
-      });
-    } else if (line.startsWith("### ")) {
-      renderedLines.push({
-        type: "h3",
-        content: line.replace("### ", ""),
-        key: i,
-      });
-    } else if (line.startsWith("- ")) {
-      renderedLines.push({
-        type: "li",
-        content: line.replace("- ", ""),
-        key: i,
-      });
-    } else if (line.trim() === "") {
-      renderedLines.push({ type: "br", content: "", key: i });
-    } else {
-      const html = line
-        .replace(
-          /`([^`]+)`/g,
-          "<code class='text-foreground bg-surface-hover px-1 rounded text-xs'>$1</code>",
-        )
-        .replace(
-          /\*\*(.+?)\*\*/g,
-          "<strong class='text-foreground'>$1</strong>",
-        )
-        .replace(/\*(.+?)\*/g, "<em>$1</em>");
-      renderedLines.push({ type: "p", content: html, key: i });
-    }
-  }
 
   return (
     <div>
       <h2 className="font-mono font-semibold text-foreground text-lg mb-4">
         {title}
       </h2>
-      <div className="prose-custom text-sm">
-        {renderedLines.map((r) => {
-          if (r.type === "h2")
-            return (
-              <h2
-                key={r.key}
-                className="font-mono text-foreground text-base mt-5 mb-2 pb-1 border-b border-border"
-              >
-                {r.content}
-              </h2>
-            );
-          if (r.type === "h3")
-            return (
-              <h3
-                key={r.key}
-                className="font-mono text-foreground text-sm mt-4 mb-1"
-              >
-                {r.content}
-              </h3>
-            );
-          if (r.type === "li")
-            return (
-              <li
-                key={r.key}
-                className="text-foreground-dim ml-4 list-disc text-sm"
-              >
-                {r.content}
-              </li>
-            );
-          if (r.type === "br") return <br key={r.key} />;
-          if (r.type === "code")
-            return (
-              <pre
-                key={r.key}
-                className="bg-surface-alt border border-border rounded-md p-3 my-3 overflow-x-auto"
-              >
-                <code className="text-xs text-foreground">
-                  {r.code?.join("\n")}
-                </code>
-              </pre>
-            );
-          return (
-            <p
-              key={r.key}
-              className="text-sm text-foreground-dim mb-1 leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: r.content }}
-            />
-          );
-        })}
-      </div>
+      <div
+        className="prose-custom text-sm"
+        dangerouslySetInnerHTML={{ __html: htmlContent }}
+      />
     </div>
   );
 }
@@ -285,6 +180,48 @@ function RelatedNotes({ slug }: { slug: string }) {
   );
 }
 
+function NoteOutline({ headings }: { headings: Heading[] }) {
+  if (headings.length === 0) return null;
+
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const handleClick = (id: string) => {
+    setActiveId(id);
+    const el = document.getElementById(id);
+    if (el) {
+      const top = el.getBoundingClientRect().top + window.scrollY - 100;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  };
+
+  return (
+    <div>
+      <h4 className="font-mono text-xs font-medium text-foreground-dim uppercase tracking-wider mb-3">
+        Outline
+      </h4>
+      <nav className="space-y-0.5 max-h-[60vh] overflow-y-auto border-l border-border">
+        {headings.map((h, i) => (
+          <button
+            key={i}
+            onClick={() => handleClick(h.id)}
+            className={`block w-full text-left font-mono text-[11px] truncate transition-all py-1 border-l-2 -ml-px ${
+              activeId === h.id
+                ? "border-foreground text-foreground bg-surface-hover"
+                : "border-transparent text-foreground-dim hover:border-foreground-dim/40 hover:text-foreground hover:bg-surface-hover/50"
+            }`}
+            style={{ paddingLeft: `${8 + (h.level - 1) * 12}px` }}
+          >
+            <span className="opacity-40 mr-1 select-none">
+              {h.level === 1 ? "—" : h.level === 2 ? "–" : "·"}
+            </span>
+            {h.text}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
 function NotesContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -293,6 +230,7 @@ function NotesContent() {
   const [nodes, setNodes] = useState<NoteNode[]>([]);
   const [view, setView] = useState<"default" | "graph">("default");
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
+  const [headings, setHeadings] = useState<Heading[]>([]);
 
   useEffect(() => {
     fetch(`/api/notes-index?locale=${locale}`)
@@ -341,7 +279,7 @@ function NotesContent() {
 
         <main className="flex-1 min-w-0">
           {activeSlug ? (
-            <NoteContent slug={activeSlug} />
+            <NoteContent slug={activeSlug} onHeadings={setHeadings} />
           ) : (
             <div>
               <div className="flex items-center gap-2 mb-6">
@@ -386,8 +324,9 @@ function NotesContent() {
         </main>
 
         {activeSlug && (
-          <aside className="w-48 shrink-0 hidden lg:block">
-            <div className="sticky top-20">
+          <aside className="w-52 shrink-0 hidden lg:block">
+            <div className="sticky top-20 space-y-6">
+              <NoteOutline headings={headings} />
               <RelatedNotes slug={activeSlug} />
             </div>
           </aside>

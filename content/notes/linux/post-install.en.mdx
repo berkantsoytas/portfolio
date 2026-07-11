@@ -1,0 +1,319 @@
+---
+title: "Post-Installation Configuration"
+date: "2026-07-11"
+tags: ["linux", "post-install", "kde", "optimization"]
+---
+
+# Post-Installation Personalization
+
+Steps I take after completing an Arch Linux + KDE Plasma installation.
+
+---
+
+## 1. Paru (AUR Helper)
+
+Paru is a pacman wrapper that simplifies installing packages from the AUR.
+
+```bash
+sudo pacman -S --needed git base-devel
+
+git clone https://aur.archlinux.org/paru.git
+cd paru
+makepkg -si
+```
+
+Usage:
+
+```bash
+paru <package-name>
+
+paru -S <package-name>
+
+paru
+```
+
+> `paru` defaults to the same behavior as `sudo pacman -Syu` plus AUR package updates. One command keeps everything current.
+
+---
+
+## 2. Mirror Optimization (reflector + cachyos-rate-mirrors)
+
+Fast, up-to-date mirrors are critical for both `pacman` and `paru`. Two tools are used:
+
+- `reflector` — fetches official Arch mirrors, sorts by speed, updates `mirrorlist`.
+- `cachyos-rate-mirrors` — CachyOS's own mirror benchmark tool. More aggressive sorting, also works for the CachyOS repo.
+
+```bash
+sudo pacman -S reflector
+
+sudo pacman -S cachyos-rate-mirrors
+```
+
+### Update mirrorlist with reflector
+
+```bash
+sudo reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+```
+
+### reflector timer (automatic updates)
+
+```bash
+sudo systemctl enable --now reflector.timer
+```
+
+Runs weekly — keeps your mirrorlist fresh automatically.
+
+### cachyos-rate-mirrors
+
+```bash
+sudo cachyos-rate-mirrors
+```
+
+This benchmarks CachyOS mirrors and updates `/etc/pacman.d/cachyos-mirrorlist`.
+
+> **Order**: Run `cachyos-rate-mirrors` first (CachyOS mirrors), then `reflector` (Arch mirrors). Together they ensure optimal speed across all repos.
+
+---
+
+## 3. EasyEffects (Audio Enhancement)
+
+EasyEffects applies audio effects on top of PipeWire. It significantly improves laptop speaker quality.
+
+```bash
+sudo pacman -S easyeffects
+
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/JackHack96/EasyEffects-Presets/master/install.sh)"
+```
+
+After installation:
+1. Open EasyEffects
+2. **Import** a preset (e.g., "Sparky" or "Rock music")
+3. Enable the preset
+4. Add EasyEffects to autostart via KDE System Settings → Startup and Shutdown → Autostart, or add it to `~/.config/autostart/`
+
+PipeWire ships with KDE, no extra setup needed.
+
+### WirePlumber — sof-firmware soft-mixer workaround
+
+sof-firmware has chronic issues with hardware mixers on some Intel audio cards. Fix: enable ALSA soft-mixer through WirePlumber.
+
+```bash
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d/
+```
+
+`~/.config/wireplumber/wireplumber.conf.d/51-output-soft-mixer.conf`:
+
+```conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      {
+        device.name = "~alsa_card.*"
+      }
+    ]
+    actions = {
+      update-props = {
+        api.alsa.soft-mixer = true
+      }
+    }
+  }
+]
+```
+
+```bash
+systemctl --user restart wireplumber
+```
+
+> This replaces the hardware mixer with a software mixer for all ALSA cards. Fixes volume control issues when `amixer` or KMix can't adjust levels properly.
+
+---
+
+## 4. Firewalld (Firewall)
+
+Firewalld is a dynamic firewall manager. It blocks all incoming connections by default.
+
+```bash
+sudo pacman -S firewalld
+
+sudo systemctl enable --now firewalld
+
+sudo firewall-cmd --state
+```
+
+Basic rules:
+
+```bash
+sudo firewall-cmd --get-default-zone
+
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --reload
+
+sudo firewall-cmd --permanent --add-service=kdeconnect
+sudo firewall-cmd --reload
+```
+
+> Use `--permanent` to make rules persistent. Run `--reload` to apply them.
+
+---
+
+## 5. Timeshift (System Backup)
+
+Timeshift creates filesystem snapshots for easy rollback. Works with systemd-boot in RSYNC mode (recommended for ext4).
+
+```bash
+sudo pacman -S timeshift
+```
+
+After installation:
+1. Open Timeshift
+2. Select snapshot type: **RSYNC** (recommended for ext4)
+3. Choose target disk/partition (usually root)
+4. Set schedule (e.g., daily, weekly, monthly)
+5. Take first manual snapshot: `[Create]`
+
+```bash
+sudo timeshift --create --comments "after initial setup"
+
+sudo timeshift --list
+
+sudo timeshift --restore
+```
+
+### Automated Snapshots with systemd (No AUR, Sandboxed)
+
+Instead of relying on AUR packages like `timeshift-autosnap`, write your own automation with systemd timer/service pairs. The services are sandboxed with **PrivateNetwork**, **CapabilityBoundingSet**, etc. — even root privileges are restricted, network access is completely blocked.
+
+**1. Hourly timer:**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-hourly.timer > /dev/null << 'EOF'
+[Unit]
+Description=Hourly Timeshift check for snapshots
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+**2. Hourly service (sandboxed):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-hourly.service > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift Snapshots
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/timeshift --check --scripted
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+EOF
+```
+
+**3. Boot timer (10 min after boot):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-boot.timer > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift boot snapshot
+
+[Timer]
+OnBootSec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+**4. Boot service (sandboxed):**
+
+```bash
+sudo tee /etc/systemd/system/timeshift-boot.service > /dev/null << 'EOF'
+[Unit]
+Description=Timeshift Boot Snapshot
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/timeshift --create --scripted --tags B
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_FSETID CAP_SETFCAP CAP_SYS_ADMIN CAP_SYS_MODULE CAP_IPC_LOCK CAP_SYS_NICE
+LockPersonality=true
+NoNewPrivileges=false
+PrivateNetwork=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+EOF
+```
+
+**5. Enable:**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now timeshift-hourly.timer
+sudo systemctl enable --now timeshift-boot.timer
+```
+
+Files live in `/etc/systemd/system/` — never overwritten by system updates.
+
+> Snapshots are stored in `/timeshift/` by default. Clean up old ones to save space.
+
+---
+
+## 6. Fstrim (SSD TRIM)
+
+Regular TRIM keeps SSD performance and longevity. The `fstrim.timer` runs weekly.
+
+```bash
+sudo systemctl enable --now fstrim.timer
+
+systemctl status fstrim.timer
+
+sudo fstrim -av
+```
+
+---
+
+## 7. Other System Tweaks
+
+### Sysctl tweaks
+
+```bash
+cat >> /etc/sysctl.d/99-performance.conf << 'EOF'
+vm.swappiness=10
+
+fs.inotify.max_user_watches=524288
+
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+```
+
+### systemd-boot — default kernel selection
+
+```bash
+```
+
+If both kernels (`linux` and `linux-cachyos`) are installed, both appear in `bootctl list`. Change the default in `/boot/loader/loader.conf` by editing the `default` line.
+
+---
+
+## 8. Summary
+
+| Component | Purpose |
+|-----------|---------|
+| `paru` | AUR package manager |
+| `easyeffects` | Audio enhancement (presets: JackHack96) |
+| `firewalld` | Firewall |
+| `timeshift` | System backup / snapshot |
+| `fstrim.timer` | Weekly SSD TRIM |
+| `sysctl` | Kernel tuning (swappiness, BBR, inotify) |

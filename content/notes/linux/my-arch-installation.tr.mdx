@@ -1,0 +1,404 @@
+---
+title: "My Arch Installation Settings"
+date: "2026-07-11"
+tags: ["linux", "cachyos", "installation_guide", "nvidia", "systemd-boot"]
+---
+
+# Arch Linux Kurulum Notlarım
+
+> **Sistem**: Lenovo Yoga Creator i7
+> **İşletim Sistemi**: Arch Linux
+> **Kernel**: linux-cachyos
+> **Boot Loader**: systemd-boot
+> **GPU Driver**: NVIDIA 580.173.02
+
+---
+
+## 1. USB Hazırlığı
+
+Arch ISO'yu [archlinux.org/download](https://archlinux.org/download/) adresinden indir.
+
+Ventoy'a ISO'yu yaz:
+
+```bash
+cp ~/Downloads/archlinux-2026.07.01-x86_64.iso /media/ventoy/
+```
+
+Ventoy USB'den boot et → Arch ISO'yu seç.
+
+---
+
+## 2. Boot ve Klavye
+
+```bash
+loadkeys trq
+```
+
+---
+
+## 3. İnternete Bağlanma (iwd)
+
+```bash
+iwctl
+
+[iwd]# device list
+[iwd]# station wlan0 scan
+[iwd]# station wlan0 get-networks
+[iwd]# station wlan0 connect "SSID_ADI"
+
+[iwd]# exit
+```
+
+Bağlantıyı test et:
+
+```bash
+ping -c 4 archlinux.org
+```
+
+---
+
+## 4. Sistem Saati
+
+```bash
+timedatectl set-ntp true
+timedatectl status
+```
+
+---
+
+## 5. Disk Bölümleme
+
+> **Layout**: 1GB EFI boot / 16GB swap / gerisi ext4 root
+
+Diski belirle:
+
+```bash
+lsblk
+```
+
+cfdisk ile bölümle (interaktif, kolay):
+
+```bash
+cfdisk /dev/nvme0n1
+```
+
+**cfdisk adımları:**
+
+| Adım                        | İşlem                                        |
+| --------------------------- | -------------------------------------------- |
+| GPT label seç               | `[gpt]` seç                                  |
+| 1. bölüm (EFI)              | `[New]` → size: `1G` → type: `EFI System`    |
+| 2. bölüm (Swap)             | `[New]` → size: `16G` → type: `Linux swap`   |
+| 3. bölüm (Root)             | `[New]` → size: (kalan) → type: `Linux filesystem` |
+| Yaz ve çık                  | `[Write]` → `yes` → `[Quit]`                 |
+
+---
+
+## 6. Formatlama
+
+```bash
+mkfs.fat -F32 /dev/nvme0n1p1
+
+mkswap /dev/nvme0n1p2
+
+mkfs.ext4 /dev/nvme0n1p3
+```
+
+---
+
+## 7. Bağlama (Mount)
+
+```bash
+mount /dev/nvme0n1p3 /mnt
+
+mount --mkdir /dev/nvme0n1p1 /mnt/boot
+
+swapon /dev/nvme0n1p2
+```
+
+---
+
+## 8. CachyOS Repo Ekleme & Base Kurulum
+
+Hem **standart Arch çekirdeği** (`linux`) hem de **CachyOS çekirdeği** (`linux-cachyos`) birlikte kurulacak. CachyOS daha iyi masaüstü performansı için optimize edilmiştir, standart Arch çekirdeği ise yedek olarak kalır.
+
+Önce CachyOS reposunu ekle:
+
+```bash
+pacman -Sy
+pacman -S --noconfirm archlinux-keyring
+
+pacman -S --noconfirm cachyos-keyring
+```
+
+CachyOS repo config'i (manuel):
+
+```bash
+cat >> /etc/pacman.conf << 'EOF'
+[cachyos]
+Server = https://mirror.cachyos.org/repo/x86_64/$repo
+SigLevel = Optional TrustAll
+EOF
+```
+
+Temel sistemi kur (`-K` ile donanıma göre optimize edilmiş kernel):
+
+```bash
+pacstrap -K /mnt base base-devel \
+  linux linux-headers \
+  linux-cachyos linux-cachyos-headers \
+  linux-firmware sof-firmware cachyos-mirrorlist \
+  amd-ucode intel-ucode \
+  iwd networkmanager \
+  vim nano sudo fish firefox \
+  git htop btop neofetch \
+  sddm plasma-desktop \
+  dolphin konsole kate
+```
+
+> `intel-ucode` — Intel işlemci mikro kod güncellemeleri.
+> `sof-firmware` — Intel ses (Sound Open Firmware) desteği.
+> `plasma-desktop` — KDE masaüstü ortamı.
+> `sddm` — KDE'nin display manager'ı.
+
+---
+
+## 9. fstab
+
+```bash
+genfstab -U /mnt >> /mnt/etc/fstab
+cat /mnt/etc/fstab  # kontrol et
+```
+
+---
+
+## 10. Chroot
+
+```bash
+arch-chroot /mnt
+```
+
+Artık chroot ortamındayız.
+
+---
+
+## 11. Zaman Dilimi
+
+```bash
+ln -sf /usr/share/zoneinfo/Europe/Istanbul /etc/localtime
+hwclock --systohc
+```
+
+---
+
+## 12. Dil ve Lokalizasyon
+
+```bash
+sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+sed -i 's/^#tr_TR.UTF-8/tr_TR.UTF-8/' /etc/locale.gen
+locale-gen
+
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "KEYMAP=trq" > /etc/vconsole.conf
+```
+
+---
+
+## 13. Hostname
+
+Makine adı (hostname), ağ üzerinde cihazın tanınmasını sağlar. `hosts` dosyası ise localhost çözümlemesi için gereklidir — onsuz bazı uygulamalar (ör. X11, sudo) gecikmeli çalışabilir.
+
+```bash
+echo "yoga-arch" > /etc/hostname
+
+cat >> /etc/hosts << 'EOF'
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   yoga-arch.localdomain yoga-arch
+EOF
+```
+
+---
+
+## 14. Ağ Yapılandırması
+
+> iwd sadece ISO kurulum anında WiFi'a bağlanmak için kullanılır. Sisteme kurulduktan sonra NetworkManager yeterlidir.
+
+```bash
+systemctl enable NetworkManager
+```
+
+---
+
+## 15. initramfs
+
+```bash
+sed -i 's/^MODULES=()/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+
+mkinitcpio -P
+```
+
+---
+
+## 16. Root Parolası
+
+```bash
+passwd
+```
+
+---
+
+## 17. Bootloader — systemd-boot
+
+```bash
+bootctl install
+```
+
+**Bootloader girişini oluştur.** Root bölümünü PARTUUID ile tanımlıyoruz — disk sırası değişse bile (`/dev/nvme0n1p3` → `/dev/sda1` gibi) sistem açılır.
+
+```bash
+cat > /boot/loader/entries/arch.conf << 'EOF'
+title   Arch Linux (CachyOS)
+linux   /vmlinuz-linux-cachyos
+initrd  /intel-ucode.img
+initrd  /initramfs-linux-cachyos.img
+options root=PARTUUID=<ROOT_PARTUUID> rw nvidia_drm.modeset=1
+EOF
+```
+
+> `linux` satırında kullanılacak çekirdek: `linux-cachyos`. Yedek olarak `vmlinuz-linux` da eklenebilir.
+
+**PARTUUID'yi bul ve `arch.conf` içine yaz:**
+
+```bash
+blkid -s PARTUUID -o value /dev/nvme0n1p3
+
+```
+
+Alternatif olarak `bootctl status` ile kurulumu doğrula:
+
+```bash
+bootctl status
+```
+
+**Loader config:**
+
+```bash
+cat > /boot/loader/loader.conf << 'EOF'
+default arch.conf
+timeout 4
+editor no
+EOF
+```
+
+---
+
+## 18. NVIDIA Driver Kurulumu (580.173.02)
+
+```bash
+pacman -S nvidia-dkms nvidia-utils nvidia-settings nvidia-prime
+```
+
+Driver versiyonunu doğrulamak için:
+
+```bash
+modinfo nvidia | grep ^version
+```
+
+> Güncel sürüm: **580.173.02**
+
+### NVIDIA Kernel Parametreleri
+
+`/boot/loader/entries/arch.conf` içinde `options` satırına eklendi:
+
+```
+nvidia_drm.modeset=1
+```
+
+### NVIDIA Hook (mkinitcpio)
+
+`/etc/mkinitcpio.conf` dosyasında daha önce eklendi:
+
+```
+MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+```
+
+---
+
+## 19. Kullanıcı Oluşturma
+
+```bash
+useradd -m -G wheel,audio,video,input,storage -s /usr/bin/fish berkant
+passwd berkant
+
+echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
+```
+
+---
+
+## 20. KDE Plasma & SDDM
+
+SDDM display manager'ı ve KDE Plasma masaüstünü etkinleştir:
+
+```bash
+systemctl enable sddm
+```
+
+SDDM tema ve kullanıcı listesi ayarları (`/etc/sddm.conf.d/`):
+
+```bash
+mkdir -p /etc/sddm.conf.d
+cat > /etc/sddm.conf.d/theme.conf << 'EOF'
+[Theme]
+Current=breeze
+EOF
+```
+
+---
+
+## 21. Kernel Güncellemeleri
+
+Her iki kernel de pacman ile güncellenir:
+
+```bash
+pacman -Syu
+
+pacman -S linux linux-headers linux-cachyos linux-cachyos-headers
+```
+
+---
+
+## 22. Tamamlama
+
+```bash
+exit
+
+umount -R /mnt
+
+reboot
+```
+
+---
+
+## Özet: Partition Layout
+
+| Bölüm            | Boyut | Tip         | Mount Noktası |
+| ---------------- | ----- | ----------- | ------------- |
+| `/dev/nvme0n1p1` | 1GB   | EFI (FAT32) | `/boot`       |
+| `/dev/nvme0n1p2` | 16GB  | Swap        | —             |
+| `/dev/nvme0n1p3` | Kalan | ext4        | `/`           |
+
+## Özet: Kullanılan Yazılımlar
+
+| Bileşen      | Seçim                             |
+| ------------ | --------------------------------- |
+| ISO Yazma    | Ventoy                            |
+| Dağıtım      | Arch Linux                        |
+| Kernel       | CachyOS (`linux-cachyos`)         |
+| Ağ (kurulum) | `iwd`                             |
+| Ağ (genel)   | NetworkManager                    |
+| GPU Driver   | NVIDIA 580.173.02 (`nvidia-dkms`) |
+| Bootloader   | systemd-boot                      |
+| Disk Format  | ext4 (root), FAT32 (EFI)          |
+| Shell        | fish                              |
+| Editor       | vim / nano                        |
