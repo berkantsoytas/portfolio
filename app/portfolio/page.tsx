@@ -58,36 +58,43 @@ const educationEN = [
 
 const skillCategories = [
   {
+    key: "skill_languages",
     title: "Languages",
     items: ["Go", "TypeScript", "JavaScript", "Rust", "Solidity", "C#", "Python"],
   },
   {
+    key: "skill_backend",
     title: "Backend & Systems",
     items: ["Node.js", "Express.js", "NestJS", "ASP.NET", "Microservices", "REST APIs", "Distributed Systems", "Event-Driven Architecture"],
   },
   {
+    key: "skill_blockchain",
     title: "Blockchain & Web3",
     items: ["Smart Contracts", "DeFi Protocols", "EVM", "Web3.js", "Ethers.js", "Blockchain Bots", "On-chain Data"],
   },
   {
+    key: "skill_databases",
     title: "Databases",
     items: ["PostgreSQL", "MongoDB", "MySQL", "MSSQL", "SQLite", "Redis", "Database Design", "Query Optimization"],
   },
   {
+    key: "skill_devops",
     title: "Infrastructure & DevOps",
     items: ["Docker", "Kubernetes", "CI/CD", "Git", "Linux", "Nginx"],
   },
   {
+    key: "skill_messaging",
     title: "Data & Messaging",
     items: ["Kafka", "RabbitMQ", "Event Streaming", "Background Workers"],
   },
   {
+    key: "skill_ai",
     title: "AI & Automation",
     items: ["AI Agents", "LLM Integrations", "Automation Scripting"],
   },
 ];
 
-const projects = [
+const projectsEN = [
   {
     name: "steem-sbd-arbitrage-pipeline",
     description:
@@ -138,6 +145,57 @@ const projects = [
   },
 ];
 
+const projectsTR = [
+  {
+    name: "steem-sbd-arbitrage-pipeline",
+    description:
+      "Cross-chain arbitraj sistemi: Steem blokzincirinden SBD çeken, Upbit borsasında satan, STEEM alıp geri transfer eden otomatize pipeline. Event-driven mimari, gerçek zamanlı fiyat takibi, otomatik çalıştırma.",
+    tags: ["Steem", "Node.js", "Event-Driven", "Arbitrage", "Automation"],
+  },
+  {
+    name: "robinia-swap",
+    description:
+      "Otomatik market maker (AMM) ile DeFi swap protokolü. Özel likidite havuzu yönetimi, swap routing ve yield farming mekanizmaları. EVM uyumlu zincirler için Solidity akıllı kontratlarla inşa edildi.",
+    tags: ["Solidity", "DeFi", "EVM", "AMM", "Smart Contracts"],
+  },
+  {
+    name: "pokemon-go-blockchain",
+    description:
+      "Pokemon Go esinli blokzincir tabanlı koleksiyon kart oyunu. NFT kartlar, geliştirme mekanikleri (birleştirme, evrim, takas), on-chain metadata, yetiştirme ve marketplace entegrasyonu.",
+    tags: ["Solidity", "NFT", "GameFi", "EVM", "IPFS"],
+  },
+  {
+    name: "walk-to-earn",
+    description:
+      "Blokzincir ödüllü gamified fitness uygulaması. Kullanıcılar yürüyerek token kazanır. DEX'te likidite havuzu olan özel ERC-20 token. Konum doğrulama ve anti-cheat sistemleri.",
+    tags: ["Solidity", "Tokenomics", "DeFi", "Liquidity", "Mobile"],
+  },
+  {
+    name: "blockchain-indexer",
+    description:
+      "Blokzincir verisi toplama, event indeksleme ve işlem otomasyonu için ölçeklenebilir mikroservis. Kafka tabanlı event streaming. Günlük milyonlarca eventi milisaniye altı gecikmeyle işler.",
+    tags: ["Node.js", "Kafka", "Redis", "PostgreSQL", "Docker"],
+  },
+  {
+    name: "mempool-monitor",
+    description:
+      "EVM zincirleri için gerçek zamanlı mempool işlem takibi. Bekleyen işlemleri izler, MEV fırsatlarını tespit eder, WebSocket üzerinden analiz pipeline'ına veri akışı sağlar.",
+    tags: ["Go", "Web3.js", "EVM", "Redis", "WebSocket"],
+  },
+  {
+    name: "cross-chain-bridge",
+    description:
+      "Birden çok heterojen zinciri birbirine bağlayan özel blokzincir köprü altyapısı. EVM ve non-EVM ağlar arasında varlık ve veri transferi. Validatör set consensus'u, on-chain light client doğrulama ve relayer node ağı.",
+    tags: ["Solidity", "Go", "Bridge", "Cross-Chain", "Validators"],
+  },
+  {
+    name: "steem-sidechain-network",
+    description:
+      "Native sidechain desteği olmayan blokzincirler (Steem) için sürdürülebilir sidechain çözümü. EVM uyumlu özel sidechain ile akıllı kontrat, dApp ve DeFi protokol desteği. Özel bridge, blok üretimi ve tokenomics.",
+    tags: ["Go", "Sidechain", "EVM", "Infrastructure", "Custom"],
+  },
+];
+
 export default async function PortfolioPage() {
   const cookieStore = await cookies();
   const locale = (cookieStore.get("locale")?.value ?? "tr") as "tr" | "en";
@@ -148,6 +206,7 @@ export default async function PortfolioPage() {
 
   const experience = locale === "tr" ? experienceTR : experienceEN;
   const education = locale === "tr" ? educationTR : educationEN;
+  const projects = locale === "tr" ? projectsTR : projectsEN;
 
   return (
     <div className="py-8">
@@ -187,8 +246,9 @@ export default async function PortfolioPage() {
           <div className="flex items-center gap-3">
             <span className="text-foreground-dim w-16 shrink-0">languages</span>
             <span className="text-foreground-dim">
-              TR: native · EN: fluent (read/write),{" "}
-              <span className="text-foreground-dim/60" title="Speaking skills not found">speaking: 404</span>
+              <span>{dict["portfolio.lang_tr"]}</span>
+              <span className="mx-1.5 text-foreground-dim/50">·</span>
+              <span>{dict["portfolio.lang_en"]}</span>
             </span>
           </div>
           <div className="flex items-center gap-3 pt-2 border-t border-border mt-2">
@@ -212,9 +272,9 @@ export default async function PortfolioPage() {
             </h3>
             <div className="space-y-5">
               {skillCategories.map((cat) => (
-                <div key={cat.title}>
+                <div key={cat.key}>
                   <h4 className="font-mono text-[11px] text-foreground-dim uppercase tracking-wider mb-2">
-                    {cat.title}
+                    {(dict as Record<string, string>)[`portfolio.${cat.key}`] ?? cat.title}
                   </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {cat.items.map((skill) => (

@@ -28,6 +28,13 @@
   "portfolio.languages": "Diller",
   "portfolio.lang_tr": "Türkçe (Ana dil)",
   "portfolio.lang_en": "İngilizce (Okuma/Yazma: akıcı, Konuşma: 404)",
+  "portfolio.skill_languages": "Diller",
+  "portfolio.skill_backend": "Backend & Sistemler",
+  "portfolio.skill_blockchain": "Blokzincir & Web3",
+  "portfolio.skill_databases": "Veritabanları",
+  "portfolio.skill_devops": "Altyapı & DevOps",
+  "portfolio.skill_messaging": "Veri & Mesajlaşma",
+  "portfolio.skill_ai": "AI & Otomasyon",
 
   "blog.title": "Blog",
   "blog.subtitle": "grep -r 'thoughts' /blog",

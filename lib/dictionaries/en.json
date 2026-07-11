@@ -28,6 +28,13 @@
   "portfolio.languages": "Languages",
   "portfolio.lang_tr": "Turkish (Native)",
   "portfolio.lang_en": "English (Read/Write: fluent, Speaking: 404)",
+  "portfolio.skill_languages": "Languages",
+  "portfolio.skill_backend": "Backend & Systems",
+  "portfolio.skill_blockchain": "Blockchain & Web3",
+  "portfolio.skill_databases": "Databases",
+  "portfolio.skill_devops": "Infrastructure & DevOps",
+  "portfolio.skill_messaging": "Data & Messaging",
+  "portfolio.skill_ai": "AI & Automation",
 
   "blog.title": "Blog",
   "blog.subtitle": "grep -r 'thoughts' /blog",

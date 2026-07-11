@@ -111,8 +111,47 @@ export default async function BlogPostPage({
             <Link href="/blog" className="hover:text-foreground">← {dict["blog.back"]}</Link>
           </div>
 
+          {/* Mobile tags */}
+          {post.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-6 md:hidden">
+              {post.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="px-2 py-0.5 text-[10px] font-mono rounded bg-tag-bg text-tag-fg border border-tag-border"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="prose-custom">{content}</div>
         </article>
+
+        {/* Mobile related posts */}
+        {related.length > 0 && (
+          <div className="mt-10 lg:hidden">
+            <h4 className="font-mono text-xs font-medium text-foreground mb-3 uppercase tracking-wider">
+              Related
+            </h4>
+            <div className="space-y-2">
+              {related.map((r) => (
+                <Link
+                  key={r.slug}
+                  href={`/blog/${r.slug}`}
+                  className="block px-3 py-2 rounded border border-border hover:border-border-bright hover:bg-surface-hover transition-colors"
+                >
+                  <p className="font-mono text-xs text-foreground truncate">
+                    {r.title}
+                  </p>
+                  <p className="text-[10px] text-foreground-dim mt-0.5">
+                    {r.readTime} {readTimeLabel}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Right sidebar — Related */}

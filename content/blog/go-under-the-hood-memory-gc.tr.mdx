@@ -7,11 +7,11 @@ excerpt: "Go'nun bellek modeli, garbage collector iç işleyişi, escape analysi
 
 ## Giriş: "Varsayılanı Yeterince Hızlı"
 
-Go'nun vaadi sadedir: üretimde sorun çıkarmayan bir dil. Çoğu senaryo için bu doğrudur, ancak bir mimar olarak "varsayılanın yeterli olduğu yer" ile "elle tuning gerektiren yer" arasındaki çizgiyi bilmek zorundasınız. Stack allocasyonu, escape analysis ve concurrent GC çoğu yükü otomatik taşır; fakat yüksek throughput'lu sistemlerde mikrosoniye mertebesindeki GC latency'leri bile kritik hale gelir. Bu yazı, Go'nun bellek yönetimini anlamanızı ve gerektiğinde doğru tuning kararları almanızı sağlayacak.
+Go'nun vaadi nettir: üretimde sorun çıkarmayan bir dil. Çoğu senaryo için bu doğrudur. Ama bir mimar olarak "varsayılan ne zaman yeterli, ne zaman elle tuning gerekir" çizgisini bilmek zorundasınız. Stack allocasyonu, escape analysis ve concurrent GC çoğu yükü otomatik taşır. Fakat yüksek throughput'lu sistemlerde mikrosaniye mertebesindeki GC latency'leri bile kritik hale gelir. Bu yazı, Go'nun bellek yönetimini anlamanızı ve gerektiğinde doğru tuning kararları almanızı sağlayacak.
 
 ## Stack vs Heap Allocasyonu
 
-Go derleyicisi her değişkenin nerede yaşayacağına **escape analysis** ile karar verir. Stack ucuzdur: fonksiyon dönüşünde otomatik temizlenir, pointer chasing olmaz, GC dokunmaz. Heap pahalıdır: allocasyon, GC marking ve sweep maliyeti vardır.
+Go derleyicisi her değişkenin nerede yaşayacağına **escape analysis** ile karar verir. Stack ucuzdur: fonksiyon dönüşünde otomatik temizlenir, pointer chasing olmaz, GC dokunmaz bile. Heap pahalıdır: allocasyon, GC marking ve sweep derken her bir işlemin maliyeti vardır.
 
 ### Heap Allocasyonuna Zorlayan Durumlar
 
@@ -34,15 +34,15 @@ $ go build -gcflags="-m" main.go 2>&1
 ./main.go:6: moved to heap: x
 ```
 
-`-m -m` (çift) daha detaylı çıktı verir. Bazen derleyici "does not escape" dese de optimizasyon kaynaklı allocasyon olabilir — nihai doğrulama her zaman **benchmark + pprof** iledir.
+`-m -m` (çift) daha detaylı çıktı verir. Bazen derleyici "does not escape" dese de optimizasyon kaynaklı allocasyon olabilir. Nihai doğrulama her zaman **benchmark + pprof** iledir.
 
 ## Garbage Collector Derinlemesine
 
-Go'nun GC'si **concurrent, tri-color mark-sweep, non-generational, non-compacting**'dir.
+Go'nun GC'si **concurrent, tri-color mark-sweep, non-generational, non-compacting**'dir. Her bir parçayı teker teker açalım.
 
 ### Tri-Color Algoritma
 
-Üç renk: **beyaz** (taranmamış, silinebilir), **gri** (kendisi taranmış, referansları değil), **siyah** (kendisi ve referansları tamamen taranmış). GC köklerden (global'ler, stack'ler) başlar, her şeyi gri yapar, sonra gri seti boşalana kadar tarar. Kalan beyaz objeler garbage'dir.
+Üç renk: **beyaz** (taranmamış, silinebilir), **gri** (kendisi taranmış, referansları değil), **siyah** (kendisi ve referansları tamamen taranmış). GC köklerden (global'ler, stack'ler) başlar, her şeyi gri yapar, sonra gri set boşalana kadar tarar. Geriye kalan beyaz objeler — işte onlar garbage'dir.
 
 ### GC Cycle Fazları
 
@@ -53,7 +53,7 @@ Go'nun GC'si **concurrent, tri-color mark-sweep, non-generational, non-compactin
 
 ### Write Barrier
 
-Concurrent marking sırasında program GC ile eşzamanlı çalışır. Bir goroutine siyah bir objeye beyaz bir objenin pointer'ını yazarsa, GC o beyaz objeyi kaçırabilir. **Dijkstra-style insertion barrier** her pointer write işleminde hedef objeyi gri yaparak bunu önler.
+Concurrent marking sırasında program GC ile eşzamanlı çalışır. Bir goroutine siyah bir objeye beyaz bir objenin pointer'ını yazarsa, GC o beyaz objeyi kaçırabilir. **Dijkstra-style insertion barrier** tam bunu önler: her pointer write işleminde hedef objeyi gri yapar.
 
 ### GC Pacing
 
@@ -61,7 +61,7 @@ Concurrent marking sırasında program GC ile eşzamanlı çalışır. Bir gorou
 trigger = GOGC/100 * (liveHeap + GCFootprint)
 ```
 
-Varsayılan GOGC=100: live heap 10 MB ise toplam heap 20 MB'a ulaştığında GC tetiklenir. Program her an ölü heap'in 2 katı kadar fazladan bellek kullanabilir.
+Varsayılan GOGC=100: live heap 10 MB ise toplam heap 20 MB'a ulaştığında GC tetiklenir. Yani program her an ölü heap'in 2 katı kadar fazladan bellek kullanabilir.
 
 ## GC Tuning
 
@@ -78,7 +78,7 @@ Varsayılan GOGC=100: live heap 10 MB ise toplam heap 20 MB'a ulaştığında GC
 
 ### GOMEMLIMIT (Go 1.19+)
 
-GOGC yavaş yanıt verir — heap aniden şişerse threshold aşılana kadar GC tetiklenmez. `GOMEMLIMIT` hard limit koyar:
+GOGC yavaş yanıt verir — heap aniden şişerse threshold aşılana kadar GC tetiklenmez. `GOMEMLIMIT` ise hard limit koyar:
 
 ```go
 debug.SetMemoryLimit(500 * 1024 * 1024) // 500 MB
@@ -206,7 +206,7 @@ $ go tool pprof -alloc_space  localhost:6060/debug/pprof/heap  # boyuta göre
 
 ## Performans Anti-pattern'leri
 
-**String concat**: `+` operatörü her seferinde allocasyon yapar. `strings.Builder` + `Grow()` ile zero alloc'layın.
+**String concat**: `+` operatörü her seferinde allocasyon yapar. `strings.Builder` + `Grow()` ile allocationsuz hale getirin.
 
 **fmt.Sprintf vs strconv**: Sprintf reflection kullanır. Hot path'te `strconv.Itoa` + string concat tercih edin.
 

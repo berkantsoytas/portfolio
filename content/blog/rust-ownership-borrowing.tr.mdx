@@ -7,13 +7,13 @@ excerpt: "Rust'taki en önemli konsept — ownership, borrowing ve lifetime'lar�
 
 ## Giriş: "Derleyici Neden Hayatımı Zorlaştırıyor?"
 
-Java veya Go'dan gelen bir mimar olarak Rust'a başladığınızda hissettiğiniz ilk şey budur. GC sizi kendi kendinize çöp toplamaktan kurtarır, ama runtime maliyeti vardır. C/C++ size tam kontrol verir, ama `use-after-free` ve dangling pointer gibi sorunları elle yönetmek zorundasınız.
+Rust'a Java veya Go tarafından geliyorsanız, derleyiciyle ilk tanıştığınızda hissettiğiniz şey tam olarak bu. GC sizi elle bellek yönetimi derdinden kurtarır ama runtime maliyeti vardır. C/C++ size tam kontrol verir, ama bedeli ağırdır — `use-after-free`, dangling pointer, segfault'larla elle uğraşmak zorunda kalırsınız.
 
-Rust üçüncü yolu sunar: **compile-time memory safety**. Ne GC var, ne manuel `free`. Derleyici, program daha çalışmadan bellek güvenliğini garanti eder. Bunu sağlayan mekanizma **ownership** sistemidir. Bu yazı, ownership'in sadece bir kural seti değil, sistem tasarımınızı kökten değiştiren bir zihinsel model olduğunu gösterecek.
+Rust üçüncü bir yol sunar: **compile-time memory safety**. Ne GC vardır ne de manuel `free`. Derleyici, program daha çalışmadan bellek güvenliğini garanti eder. Bunu sağlayan mekanizmanın adı **ownership**. Bu yazıda ownership'in sadece bir kural seti olmadığını, sistem tasarımınızı baştan sona değiştiren bir zihinsel model olduğunu göstereceğim.
 
 ## Ownership Kuralları
 
-Üç basit kural: (1) her değerin tam olarak bir sahibi (owner) vardır, (2) sahip scope dışına çıkınca değer drop edilir, (3) bir değer birden fazla yere ait olamaz.
+Üç basit kural, hepsi bu: (1) her değerin tam olarak bir sahibi (owner) vardır, (2) owner scope'tan çıkınca değer otomatik olarak drop edilir, (3) bir değerin aynı anda birden fazla sahibi olamaz.
 
 ### Move Semantics Varsayılandır
 
@@ -23,11 +23,11 @@ let s2 = s1;                    // move: s1 artık geçersiz
 // println!("{}", s1);          // ❌ compile error
 ```
 
-`String` gibi heap-allocated tiplerde atama **move** demektir — shallow copy yapılır, ama eski sahip geçersiz kalır. Bu, double free'i compile-time'da önler. Stack-only tipler (`i32`, `bool`) ise `Copy` trait'i sayesinde otomatik kopyalanır, move olmaz.
+`String` gibi heap'te yaşayan tiplerde atama yapmak **move** anlamına gelir. Shallow copy yapılır, ama eski sahibi geçersiz hale gelir — yani aynı bellek bölgesini iki pointer göstermez. Bu sayede double free hatası compile-time'da yakalanır. Stack-only tipler (`i32`, `bool`) ise `Copy` trait'i sayesinde otomatik kopyalanır, move olmaz.
 
 ### Clone vs Copy
 
-`Copy` bitwise kopya ile sıfır maliyetlidir, ama yalnızca `Drop` implemente etmeyen tipler için geçerlidir. `Clone` ise explicit derin kopyadır, heap allocasyonu gerektirir:
+`Copy` bitwise kopya yapar ve sıfır runtime maliyeti vardır. Ama yalnızca `Drop` implemente etmeyen tiplerde çalışır — mantık basit: özel bir cleanup kodunuz varsa, otomatik bitwise kopya güvenli değildir. `Clone` ise explicit bir derin kopyadır, heap allocasyonu gerektirir:
 
 ```rust
 let s1 = String::from("hello");
@@ -35,7 +35,7 @@ let s2 = s1.clone();            // heap kopyalanır
 println!("{}", s1);             // ✅
 ```
 
-Kural: tipiniz `Clone` ise `Copy` de olabilir mi diye sorun. Değilse, her kopyalama ya maliyetlidir ya da yasaktır.
+Kural: tipiniz `Clone` ise `Copy` de olabilir mi diye kendinize sorun. Cevap hayırsa, her kopyalama ya maliyetlidir ya da tamamen yasaktır.
 
 ### Fonksiyon Çağrılarında Move
 
@@ -46,15 +46,15 @@ take(s);
 // println!("{}", s);           // ❌ ownership taşındı
 ```
 
-Fonksiyon parametrelerine geçiş de move'dur. Ownership'i geri almak ya return etmek ya da borrowing kullanmak gerekir.
+Fonksiyon çağrıları da aynı şekilde move demektir. Parametreye verdiğiniz değerin sahipliği hemen fonksiyona geçer. Ownership'i geri almanın iki yolu var: ya return edersiniz ya da borrowing kullanırsınız.
 
 ## Borrowing
 
-Move her şeyi kullanışsız kılar. Reference'lar (`&T` / `&mut T`) bu sorunu çözer: veriyi ödünç alırsınız, sahipliği devretmezsiniz.
+Her şeyi move etmek zorunda kalsaydık fonksiyon yazmak işkence olurdu. Neyse ki reference'lar (`&T` / `&mut T`) var: veriyi ödünç alırsınız, sahipliği devretmezsiniz. Borrowing denen şey tam olarak bu.
 
 ### Çok Okuyucu XOR Bir Yazıcı
 
-Rust'ın en kritik borrowing kuralı: **birden fazla `&T` olabilir VEYA bir tane `&mut T` olabilir, ikisi aynı anda olamaz:**
+Rust'ın en kritik borrowing kuralı şudur: **birden fazla `&T` olabilir VEYA bir tane `&mut T` olabilir, ikisi aynı anda olamaz:**
 
 ```rust
 let mut s = String::from("hello");
@@ -66,11 +66,11 @@ let r3 = &mut s;                // ✅ — eski borrow'lar bitti
 r3.push_str("!");
 ```
 
-Bu kural data race'leri runtime'a çıkmadan önler. Bir yazıcı varken aynı anda okuyan olamaz.
+Bu kural data race'lerin runtime'a çıkmasını daha baştan engeller. Bir tane yazıcı varsa, o anda kimse okuyamaz. Basit ama etkili.
 
 ### NLL (Non-Lexical Lifetimes)
 
-Rust 2018 öncesi borrow'lar lexical scope boyunca yaşardı. NLL ile borrow'lar son kullanım noktasında biter:
+Rust 2018'den önce borrow'lar içinde bulundukları scope'un sonuna kadar yaşardı. NLL (Non-Lexical Lifetimes) ile birlikte borrow'lar son kullanıldıkları noktada biter — daha esnek, daha akıllı:
 
 ```rust
 let mut s = String::from("hello");
@@ -88,11 +88,11 @@ fn dangling() -> &String {
 }
 ```
 
-Derleyici, bir reference'ın referans ettiği değerden daha uzun yaşayamayacağını garanti eder — C/C++'ta runtime'da patlamaya neden olan bug'ları compile-time'da eler.
+Derleyici şunu garanti eder: bir reference, gösterdiği değerden daha uzun yaşayamaz. C/C++'ta runtime'da patlamaya neden olan bug'lar compile-time'da yakalanır — segfault yok, core dump yok.
 
 ## Lifetime'lar
 
-Lifetime annotation'ları (`'a`, `'b`) reference'lar arasındaki **yaşam süresi ilişkisini** belirtir. Çalışma zamanında bir şey değişmez — sadece borrow checker'ı yönlendiren etiketlerdir.
+Lifetime annotation'ları (`'a`, `'b`) reference'lar arasındaki **yaşam süresi ilişkisini** belirtir. Runtime'da hiçbir şey değişmez — sadece borrow checker'ın işini kolaylaştıran etiketlerdir.
 
 ```rust
 fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
@@ -100,21 +100,21 @@ fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
 }
 ```
 
-Bu: "`x` ve `y` en az `'a` kadar yaşamalı, dönüş değeri en fazla `'a` kadar yaşayabilir." Lifetime'lar input ve output arasında **bağıntı** kurar.
+Anlamı: `x` ve `y` en az `'a` kadar yaşamalı, dönüş değeri de en fazla `'a` kadar yaşayabilir. Lifetime'lar input ve output arasında bir **ilişki** kurar, hepsi bu.
 
 ### Elision Kuralları
 
-Her fonksiyona lifetime yazmak gerekmez. Derleyici şu kuralları otomatik uygular: (1) her input reference kendi lifetime'ını alır, (2) tek input varsa output onun lifetime'ını alır, (3) `&self` varsa output `self`'in lifetime'ını alır.
+Her fonksiyona lifetime annotation'ı yazmak zorunda değilsiniz — derleyici sizin yerinize düşünür. Elision kuralları dediğimiz şu üç kuralı otomatik olarak uygular: (1) her input reference kendi lifetime'ını alır, (2) tek bir input reference varsa output onun lifetime'ını alır, (3) `&self` varsa output `self`'in lifetime'ını alır.
 
 ```rust
 fn first_word(s: &str) -> &str { /* elision yeterli */ }
 ```
 
-Lifetime yazmanız gereken durumlar: birden fazla input reference + output, veya struct method'larında farklı lifetime'ları ayırmak.
+Lifetime'ları elle yazmanız gereken durumlar genelde şunlar: birden fazla input reference varsa ve output döndürüyorsanız, ya da struct method'larında farklı lifetime'ları birbirinden ayırmanız gerekiyorsa.
 
 ### 'static ve Struct Lifetime
 
-`'static` program boyunca geçerli reference demektir. String literal'leri `'static`'dir. Struct reference tuttuğunda lifetime parametresi bildirmek zorunludur:
+`'static`, programın tamamı boyunca geçerli olan reference'lar içindir. String literal'leri `'static`'dir. Bir struct reference tutuyorsa lifetime parametresi bildirmek zorundasınız — derleyici bunu ister:
 
 ```rust
 struct Parser<'a> { input: &'a str }
@@ -125,7 +125,7 @@ impl<'a> Parser<'a> {
 
 ## Interior Mutability
 
-Normalde `&T` immutable'dır. Ama bazen immutable reference üzerinden mutasyon gerekir (cache, reference counting). **Interior mutability** pattern'leri bu ihtiyacı karşılar.
+Normalde `&T` üzerinden veriyi değiştiremezsiniz — kural kuraldır. Ama bazen immutable bir reference üzerinden mutasyon yapmanız gerekir (cache'leme, reference counting gibi durumlarda). **Interior mutability** pattern'leri tam olarak bu ihtiyacı karşılar.
 
 | Mekanizma | Check Zamanı | Thread-safe | Maliyet |
 |-----------|-------------|-------------|---------|
@@ -137,7 +137,7 @@ Normalde `&T` immutable'dır. Ama bazen immutable reference üzerinden mutasyon 
 
 `Cell<T>` yalnızca `Copy` tipler için çalışır, `set()`/`get()` ile sıfır maliyetlidir. `RefCell<T>` borrow kurallarını runtime'a taşır — ihlal panic atar. `Mutex` ve `RwLock` thread-safe varyantlardır.
 
-Kural: önce compile-time guarantee, runtime ancak gerçekten ihtiyaç varsa.
+Altın kural: önce compile-time guarantee'leri kullanın, runtime çözümlere ancak gerçekten ihtiyacınız varsa geçin.
 
 ## Smart Pointer'lar
 
@@ -149,7 +149,7 @@ let r = Rc::new("merhaba".to_string()); // referans sayacı, tek thread
 let a = Arc::new(vec![1, 2, 3]);        // atomic RC, çok thread
 ```
 
-`Box<T>` recursive type'lar ve trait object'ler için zorunludur. `Rc<T>` paylaşılan ownership sağlar (single-thread). `Arc<T>` atomic sayac ile thread-safe'tir.
+`Box<T>` özellikle recursive type'lar ve trait object'ler için biçilmiş kaftandır — boyutu compile-time'da bilinemeyen tipleri heap'e koyar. `Rc<T>` ile paylaşılan ownership mümkün olur (tek thread içinde). `Arc<T>` ise atomic sayaç kullanarak thread-safe hale gelir.
 
 ### RefCell + Rc/Arc
 
@@ -160,13 +160,13 @@ let r2 = Rc::clone(&shared);
 *r1.borrow_mut() += 1;
 ```
 
-Bu kombinasyon paylaşılan mutable state sağlar, ama borrow checker runtime'a taşınır — dikkatli kullanılmalıdır.
+Bu kombinasyon paylaşılan mutable state'i mümkün kılar, ama bedeli vardır: borrow checking runtime'a taşınır ve hata yaparsanız panic yersiniz. Dikkatli kullanın.
 
 ## Yaygın Pattern'ler
 
-**Builder + Ownership Chain**: Her method `self` alıp `Self` döner. Partial state'ler compile-time güvencelidir.
+**Builder + Ownership Chain**: Her method `self` alır ve `Self` döndürür. Partial state'ler compile-time'da garanti altındadır.
 
-**Type-State Pattern**: Her state geçişi farklı bir type ile temsil edilir. Geçersiz geçişler compile-time hatasıdır:
+**Type-State Pattern**: Her state geçişi farklı bir type ile temsil edilir. Geçersiz bir geçiş yapmaya kalkarsanız compile-time hatası alırsınız — runtime'da patlamak yok, panic yok:
 
 ```rust
 struct Connection<State> { _state: State }
@@ -175,19 +175,19 @@ impl Connection<Ready> { fn send(&self, data: &[u8]) { /* ... */ } }
 // Connection<Empty> üzerinde send() çağırmak ❌ compile error
 ```
 
-**Arena Allocation**: Cyclic reference'lardan kaçınmak için referans yerine indeks kullanılır. Tüm nesneler bir vektörde, ownership tektir.
+**Arena Allocation**: Cyclic reference'lardan kaçınmanın en temiz yolu referans yerine indeks kullanmaktır. Tüm nesneler bir vektörde toplanır, ownership tektir, borrow checker mutlu.
 
-**Typed ID**: Reference yerine `EntityId(u64)` tutarak lifetime karmaşasından kaçış. Oyun motorlarında ve ECS sistemlerinde yaygın.
+**Typed ID**: Reference yerine `EntityId(u64)` gibi bir ID tutarsanız lifetime dertlerinden kurtulursunuz. Oyun motorlarında ve ECS sistemlerinde çok yaygındır.
 
 ## Tuzaklar ve Çözümleri
 
-**Self-referential struct'lar**: Rust doğrudan desteklemez — struct taşınınca pointer geçersiz kalır. `Pin<T>` taşınmayı engeller, genelde async/future implementasyonlarında kullanılır.
+**Self-referential struct'lar**: Rust'ın sevmediği şeylerin başında gelir. Struct taşındığında iç pointer geçersiz kalır. `Pin<T>` taşınmayı engelleyerek bu sorunu çözer, genelde async/future implementasyonlarında kullanılır.
 
-**Fazla lifetime annotation**: Elision yeterliyse yazmayın. Derleyici sizden daha akıllıdır. Ancak hata alırsanız anlamak için annotation ekleyip "sorun."
+**Fazla lifetime annotation**: Elision yeterliyse annotation eklemeyin. Derleyici sizden daha akıllıdır, gereksiz yere işini zorlaştırmayın. Ama hata alırsanız, anlamak için annotation ekleyip derleyiciye "ne istiyorsun" diye sorun.
 
-**Closure capture**: Closure'lar reference yakalarken borrow checker'ı zorlayabilir. Çözüm: closure'ı scope içinde kullanmak veya `move` ile ownership almak.
+**Closure capture**: Closure'lar çevrelerindeki değişkenleri yakalarken borrow checker'ı zorlayabilir. Çözüm basit: closure'ı bir scope içinde kullanıp borrow'ı erken bitirin, ya da `move` ile ownership'ı closure'a devredin.
 
-**Nested borrow + NLL sınırlamaları**: Birden fazla method çağrısında borrow path takibi yetersiz kalabilir. Çözüm: scope ayırmak veya indeks bazlı erişim.
+**Nested borrow + NLL sınırlamaları**: Birden fazla method çağrısında borrow path takibi bazen yetersiz kalabilir. Çözüm: scope'ları iyi ayırmak ya da indeks bazlı erişime geçmek.
 
 ## Özet
 
@@ -201,4 +201,4 @@ impl Connection<Ready> { fn send(&self, data: &[u8]) { /* ... */ } }
 | Rc/Arc | Paylaşılan ownership | Counter (atomic/non-atomic) |
 | Pin | Self-referential safety | Sıfır (API restriction) |
 
-Rust'ın ownership modeli bir kısıtlama değil, bir **özgürlük aracıdır**. GC'nin runtime maliyetini ödemeden, C/C++'ın undefined behavior riskini almadan bellek güvenliği istiyorsanız, bu modeli benimsemek zorundasınız. Sistem tasarımınızı baştan ownership-aware yapın, sonra derleyici size teşekkür edecek — sessiz kalarak.
+Rust'ın ownership modeli bir kısıtlama değil, bir **özgürlük aracıdır**. GC'nin runtime maliyetini ödemeden, C/C++'ın undefined behavior riskini almadan bellek güvenliği istiyorsanız bu modeli benimsemek zorundasınız. Sistem tasarımınızı baştan ownership-aware tasarlayın, derleyici size teşekkür edecek — en güzel teşekkürü de sessiz kalarak yapacak.

@@ -7,26 +7,27 @@ excerpt: "Go'nun concurrency modeline derinlemesine bir bakış — GMP schedule
 
 ## Giriş: CSP ve Go Felsefesi
 
-Go'nun concurrency modeli Hoare'in Communicating Sequential Processes (CSP) teorisine dayanır: *belleği paylaşarak iletişim kurma, iletişim kurarak belleği paylaş.* Concurrency paralelizm değildir — Go ikisini de destekler, ancak tasarım önce concurrency üzerinedir.
+Go'nun concurrency modeli Hoare'in Communicating Sequential Processes (CSP) teorisine dayanır: *belleği paylaşarak iletişim kurma, iletişim kurarak belleği paylaş.* Bu cümleyi ilk okuyuşta kafanda oturmadıysa dert etme — yazının sonunda netleşecek. Concurrency paralellik değildir. Go ikisini de destekler, ama önce concurrency'i doğru kurmanı bekler.
 
-## Goroutine'ler: Süper Hafif İpler
+## Goroutine'ler: Süper Hafif Thread'ler
 
-Goroutine'ler OS thread'lerinden çok daha hafiftir. Başlangıç stack'i ~2 KB (OS thread ~1-8 MB). Runtime stack'i otomatik büyütüp daraltır. `go` anahtar kelimesi bir çağrıyı eşzamanlı yapar. Binlercesini açabilirsiniz — maliyeti ihmal edilebilir.
+Goroutine'ler OS thread'lerine göre o kadar hafif ki aklın durur. Başlangıç stack'i ~2 KB — OS thread'in ~1-8 MB'ını yanına bile yaklaşamaz. Runtime stack'i ihtiyaca göre otomatik büyütüp daraltır, sen hiç karışmazsın. `go` anahtar kelimesiyle bir fonksiyonu eşzamanlı çalıştırmak tek satır. Binlercesini aynı anda aç, maliyeti neredeyse sıfır.
 
 ### M:N Scheduling
 
-M adet goroutine N adet OS thread'e dağıtılır. Bu, 1:1 (her goroutine = thread) veya N:1 (tümü tek thread) modellerine göre hem ölçeklenebilir hem de esnektir.
+GMP modelinde M tane goroutine, N adet OS thread'e dağıtılır. Bu sayede 1:1 (her goroutine = thread) modelinin şişkinliğinden de, N:1 (tümü tek thread) modelinin darboğazından da kurtulursun. İkisinin avantajını alır, derdin ikisini de almazsın.
 
 ## GMP Scheduler
 
-Scheduler üç yapıdan oluşur:
-- **G (Goroutine)**: Çalıştırılacak kod. Stack, IP, durum bilgisi.
-- **M (Machine)**: OS thread. G'leri alır ve çalıştırır.
-- **P (Processor)**: Scheduling context. G'lerin sıraya dizildiği logical processor.
+Scheduler üç temel yapıdan oluşur. Tanıştırayım:
+
+- **G (Goroutine)**: Çalıştırılacak kod. Stack, instruction pointer, durum bilgisi — hepsi burada.
+- **M (Machine)**: OS thread. G'leri alır ve çalıştırır. Makine gibi çalışır yani.
+- **P (Processor)**: Scheduling context. G'lerin sıraya dizildiği logical processor. Kaç tane P varsa, aynı anda o kadar iş yapılır.
 
 ### Work Stealing
 
-Bir P'nin run queue'si boşaldığında diğer P'lerden goroutine çalar:
+Şöyle düşün: bir P'nin iş kuyruğu boşaldı — ne yapar? Boş boş oturmaz. Diğer P'lerin run queue'sine göz atar, bulursa goroutine çalıp getirir. Buna work stealing denir:
 
 ```go
 func (pp *p) stealWork() *g {
@@ -41,11 +42,11 @@ func (pp *p) stealWork() *g {
 
 ### Preemption
 
-Go 1.14 öncesi **cooperative** idi — goroutine'ler ancak kanal/syscall/fonksiyon çağrısında el değiştirirdi. Go 1.14 ile **asynchronous preemption** geldi: OS sinyalleri (SIGURG) ile goroutine kesilir, scheduler kontrolü alır.
+Go 1.14 öncesi bu iş **cooperative**'di. Yani goroutine'ler canı isterse el değiştirirdi — kanal, syscall ya da fonksiyon çağrısı gibi noktalarda. Ama ya hiçbiri olmazsa? İşte o zaman sorun. Go 1.14'le beraber **asynchronous preemption** geldi. Artık OS sinyalleri (SIGURG) ile goroutine kesilebiliyor, scheduler kontrolü kapıp yola devam ediyor.
 
 ### GOMAXPROCS
 
-Logical processor (P) sayısını belirler. Varsayılan CPU çekirdek sayısıdır. Container'da cgroups'a saygı duyar (Go 1.5+). CPU-bound işlerde oynayarak bulun.
+Logical processor (P) sayısını belirler. Varsayılan değer CPU çekirdek sayısıdır — Go 1.5'ten beri container'larda cgroups'a da saygı duyar. CPU-bound işlerde GOMAXPROCS ile oyna, optimumu yakala.
 
 ```go
 runtime.GOMAXPROCS(4)
@@ -53,7 +54,7 @@ runtime.GOMAXPROCS(4)
 
 ## Channel'lar
 
-Tür güvenli goroutine iletişimi. CSP'nin kalbi.
+Tür güvenli, doğrudan, etkili. CSP'nin kalbi diyorum, abartmıyorum.
 
 ### Unbuffered vs Buffered
 
@@ -62,11 +63,11 @@ ch := make(chan int)       // senkron: alıcı hazır olana kadar bekler
 bufCh := make(chan int, 5) // non-blocking, kapasite dolana kadar
 ```
 
-Unbuffered senkronizasyon noktası yaratır. Buffered decoupling ve backpressure sağlar.
+Unbuffered channel tam bir senkronizasyon noktası yaratır — gönderen ve alıcı aynı anda hazır olmak zorunda. Buffered ise decoupling ve backpressure sağlar, ikisi arasındaki bağı gevşetir.
 
 ### Channel Pattern'leri
 
-**Fan-in / Fan-out:** Çok kaynaktan tek hedefe, tek kaynaktan çok işçiye:
+**Fan-in / Fan-out:** Çok kaynaktan tek hedefe (fan-in), tek kaynaktan çok işçiye (fan-out). İkisi de iş yükü dağıtmak için klasikleşmiş pattern'lerdir:
 
 ```go
 func fanIn(chs ...<-chan int) <-chan int {
@@ -84,7 +85,7 @@ func fanIn(chs ...<-chan int) <-chan int {
 }
 ```
 
-**Pipeline:** Verinin aşamalardan geçmesi — her aşama bir kanal döndürür:
+**Pipeline:** Veriyi aşama aşama işlersin — her aşama bir kanal alır, bir kanal döndürür. Birleştir gitsin:
 
 ```go
 gen := func(nums ...int) <-chan int {
@@ -102,6 +103,8 @@ for n := range sq(gen(1, 2, 3)) { fmt.Println(n) }
 
 ### Select Multiplexing
 
+Birden çok kanalı tek noktada dinlemek mi istiyorsun? `select` tam da bunun için:
+
 ```go
 select {
 case v := <-ch1: fmt.Println(v)
@@ -112,7 +115,7 @@ default: // non-blocking
 
 ### Nil Channel'lar
 
-Nil channel'a yazmak/okumak blokeler. Select içinde kolları dinamik devre dışı bırakmak için kullanılır — fan-in'de tükenen kanal nil yapılır.
+Nil channel'a yazmak da okumak da blokeler. Ama bu bir özellik! Select içinde kolları dinamik olarak devre dışı bırakmak için birebir — fan-in'de tükenen kanalı nil yap, gerisini runtime halletsin.
 
 ## Sync Primitive'leri
 
@@ -137,7 +140,7 @@ once.Do(func() { db = connectDB() })
 
 ## Context Paketi
 
-Cancellation, deadline ve isteğe özgü değerleri API boyunca taşır:
+Cancellation, deadline ve isteğe özgü değerleri API boyunca taşır. Goroutine hayatını yönetmenin resmi yolu budur:
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -149,7 +152,7 @@ case <-ctx.Done():
 }
 ```
 
-Context alan fonksiyon alt çağrılara iletmelidir. `ctx.Done()` pattern'i ile goroutine'ler temiz sonlanır:
+Context alan bir fonksiyon, onu alt çağrılara da iletmek zorunda — yoksa cancellation zinciri kopar, goroutine'ler ortada kalır. `ctx.Done()` pattern'i ile goroutine'ler temiz bir şekilde sonlanır:
 
 ```go
 go func() {
@@ -166,6 +169,8 @@ go func() {
 
 ### errgroup ile Sınırlı Concurrency (golang.org/x/sync)
 
+Bir grup işi paralel çalıştırıp hataları toplamak mı istiyorsun? `errgroup` tam aradığın şey. Üstelik `SetLimit` ile concurrency seviyesini de sınırlarsın:
+
 ```go
 g, ctx := errgroup.WithContext(context.Background())
 g.SetLimit(10)
@@ -178,7 +183,7 @@ if err := g.Wait(); err != nil { log.Fatal(err) }
 
 ### Rate Limiting
 
-Token bucket, buffered channel ve time.Ticker ile:
+Token bucket mantığı: belirli aralıklarla kovaya token at, işçiler token alabildiği sürece çalışsın. Buffered channel ve `time.Ticker` ile yapması iki satır:
 
 ```go
 type TokenBucket struct { tokens chan struct{} }
@@ -198,6 +203,8 @@ func (tb *TokenBucket) Wait(ctx context.Context) error {
 
 ### Graceful Shutdown
 
+Uygulaman kapanırken açık bağlantıları temizlemek zorundasın. `signal.NotifyContext` ile sinyalleri yakala, `Shutdown` ile bekle:
+
 ```go
 ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 defer cancel()
@@ -211,17 +218,17 @@ srv.Shutdown(sdCtx)
 
 ### Circuit Breaker
 
-State makinesi: kapalıyken hata eşiği aşılınca açılır, timeout sonrası yarı-açık, başarılı olursa tekrar kapanır. `sync.Mutex` ile state korunur.
+Bir state makinesi: kapalıyken hata eşiği aşılınca açılır, timeout sonrası yarı-açık, başarılı olursa tekrar kapanır. `sync.Mutex` ile state korunur. Basit ama dışarı bağımlı her sistemde olmazsa olmaz.
 
 ## Debugging
 
-- **Race detector** (`go run -race`): Data race tespiti — development'da zorunlu
-- **Execution tracer** (`go tool trace`): Goroutine yaşam döngüsü, scheduler olayları
-- **pprof** (`net/http/pprof`): Goroutine leak, mutex contention, CPU profiling
+- **Race detector** (`go run -race`): Data race tespiti — development'da çalıştırmasan olmaz, production'a atmadan önce şart.
+- **Execution tracer** (`go tool trace`): Goroutine'lerin doğumundan ölümüne her şeyi görürsün. Scheduler olayları, blokelenmeler, hepsi burada.
+- **pprof** (`net/http/pprof`): Goroutine leak, mutex contention, CPU profiling — üretimde can kurtaran.
 
 ## Yaygın Hatalar
 
-**Goroutine leak:** Açılan goroutine asla sonlanmaz. Context veya kanal kapatma ile çözün.
+**Goroutine leak:** Açtığın goroutine bir şekilde sonlanmaz ve arkanda ölü işlem olarak kalır. Context veya kanal kapatma ile çözülür:
 
 ```go
 // KÖTÜ
@@ -230,16 +237,16 @@ go func() { <-ch }() // sonsuz bekler
 go func() { select { case <-ctx.Done(): return; case v := <-ch: use(v) } }()
 ```
 
-**sync.Mutex kopyalamak:** Değer alıcılı metot mutex'i kopyalar. Pointer receiver kullanın.
+**sync.Mutex kopyalamak:** Değer alıcılı bir metot yazarsan Mutex'i kopyalarsın — ve koruma diye bir şey kalmaz. Pointer receiver kullan, kopyalama olmasın.
 
-**WaitGroup.Add'i goroutine içinde:** Race condition doğurur. Add'i goroutine dışında çağırın.
+**WaitGroup.Add'i goroutine içinde:** `Add`'i goroutine dışında çağırmazsan race condition doğar. Önce `Add`, sonra `go`:
 
 ```go
 // KÖTÜ: go func() { wg.Add(1); task.Run(); wg.Done() }()
 // İYİ: wg.Add(1); go func() { defer wg.Done(); task.Run() }()
 ```
 
-**time.Sleep ile senkronizasyon:** Garantisiz. Kanal veya WaitGroup kullanın.
+**time.Sleep ile senkronizasyon:** "5 saniye bekle, iş bitmiştir" mantığı garantisizdir. Yarış şartlarını Sleep'le çözmeye çalışanı döverler. Kanal veya WaitGroup kullan:
 
 ```go
 go func() { done <- true }()
@@ -256,4 +263,4 @@ go func() { done <- true }()
 | Error handling | errgroup ile concurrency + hata yönetimi |
 | Debugging | `-race` zorunlu, production'da pprof + trace |
 
-Go'nun concurrency modeli basit ama derindir. Her goroutine'e bir sorumluluk, her kanala bir yön ve bir sahip verin.
+Go'nun concurrency modeli basit görünür ama derine indikçe derinleşir. Aklında şu kalsın: her goroutine'in bir sorumluluğu, her kanalın bir yönü ve bir sahibi olsun.

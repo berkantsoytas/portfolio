@@ -7,9 +7,9 @@ excerpt: "Rust'ın hata yönetimi felsefesi — Result'un sadece 'hata yönetimi
 
 ## Giriş — Hatalar Değer Olarak
 
-Rust'ın hata yönetimi felsefesi tek bir cümleye sığar: **hatalar değerdir, exception değil.** Bu ayrım dilin temelindeki ownership ve type system ile doğrudan bağlantılıdır. `try/catch` mekanizması yoktur çünkü hatalar, normal akışın bir parçası olarak tip sistemi içinde modellenir.
+Rust'ın hata yönetimi felsefesi tek bir cümleye sığar: **hatalar değerdir, exception değil.** Bu ayrım, dilin temelini oluşturan ownership ve type system ile doğrudan bağlantılıdır. `try/catch` mekanizması yoktur çünkü hatalar, normal akışın bir parçası olarak tip sistemi içinde modellenir.
 
-Exception tabanlı dillerde hata, call stack'te yukarı fırlayan kontrol dışı bir olaydır. Rust'ta hata, fonksiyon imzasının bir parçasıdır — `Result<T, E>` dönen bir fonksiyon, çağırana "başarısız olabilirim" garantisini derleme zamanında verir.
+Exception tabanlı dillerde hata, call stack'te yukarı fırlayan denetlenemeyen bir olaydır. Rust'ta ise hata, fonksiyon imzasının bir parçasıdır — `Result<T, E>` dönen bir fonksiyon, çağırana "başarısız olabilirim" garantisini derleme zamanında verir.
 
 ```
 ┌──────────────────────────────┬──────────────────────────────────┐
@@ -22,7 +22,7 @@ Exception tabanlı dillerde hata, call stack'te yukarı fırlayan kontrol dış�
 └──────────────────────────────┴──────────────────────────────────┘
 ```
 
-Bu yaklaşımın en büyük avantajı: **bir fonksiyonun başarısız olabileceği, çağıran için görünür bir sözleşmedir.** `Result<T, E>` gören bir geliştirici, bu çağrının her iki durumunu da ele almak zorundadır — compiler buna izin vermez.
+Bu yaklaşımın en büyük avantajı şu: **bir fonksiyonun başarısız olabileceği gerçeği, çağıran için apaçık bir sözleşmedir.** `Result<T, E>` gören bir geliştirici, bu çağrının her iki durumunu da ele almak zorundadır — compiler buna izin vermez.
 
 ## panic vs Result vs Option
 
@@ -30,7 +30,7 @@ Rust üç farklı "ters giden şey" kategorisi sunar. Hangisini ne zaman kullana
 
 ### panic: Kurtarılamaz Durumlar
 
-`panic!` bir programcı hatasıdır. Index out of bounds, unwrap failed, assertion failed — bunlar kurtarılamaz çünkü programın varsayımları çökmüştür.
+`panic!` bir programcı hatasıdır. Index out of bounds, unwrap failed, assertion failed — bunlar kurtarılamaz çünkü programın varsayımları artık geçerli değildir.
 
 ```rust
 // KÖTÜ: panic kurtarılabilir bir hatayı temsil ediyor
@@ -80,7 +80,7 @@ enum Result<T, E> {
 }
 ```
 
-`Result` ile çalışırken üç yaklaşım vardır:
+`Result` ile çalışırken üç temel yaklaşım vardır:
 
 | Yaklaşım | Kullanım | Ne zaman |
 |----------|----------|----------|
@@ -90,7 +90,7 @@ enum Result<T, E> {
 
 ### unwrap/expect — Debug Aracı, Production Pattern'i Değil
 
-`unwrap()` ve `expect()` bir `Result` veya `Option`'ın başarılı olacağına dair bir assertion'dur. Başarısız olursa panic atar.
+`unwrap()` ve `expect()` bir `Result` veya `Option`'ın başarılı olacağını varsayan birer assertion'dır. Başarısız olursa panic atar.
 
 ```rust
 // SADECE prototype veya test
@@ -101,7 +101,7 @@ Production kodunda `unwrap()` ve `expect()` kırmızı bayraktır. Bir fonksiyon
 
 ## `?` Operatörü
 
-`?` operatörü Rust 1.0'dan sonra eklenen en önemli dil özelliklerinden biridir. Hata propagasyonunu sıfır boilerplate'e indirir.
+`?` operatörü Rust 1.0'dan sonra eklenen en önemli dil özelliklerinden biridir. Hata propagasyonunu neredeyse sıfır boilerplate'e indirir.
 
 ### Nasıl Çalışır
 
@@ -125,7 +125,7 @@ Bu kod `?` olmadan en az iki `match` bloğu gerektirirdi.
 
 ### From Trait Dönüşümü
 
-`?` operatörünün kritik özelliği: **otomatik tür dönüşümü yapar.** `From<E>` trait'i implemente edilmişse, `?` hatayı otomatik olarak hedef türe çevirir.
+`?` operatörünün asıl kritik özelliği şu: **otomatik tür dönüşümü yapar.** `From<E>` trait'i implemente edilmişse, `?` hatayı otomatik olarak hedef türe çevirir.
 
 ```rust
 fn read_config() -> Result<String, AppError> {
@@ -194,7 +194,7 @@ fn works() -> Result<String, AppError> {
 
 ## Custom Error Tipleri
 
-Küçük script'lerde `Box<dyn Error>` yeterlidir; büyük projelerde kendi error tiplerinizi tanımlamanız gerekir.
+Küçük script'lerde `Box<dyn Error>` yeterli. Ama büyük projelerde kendi error tiplerinizi tanımlamanız gerekir.
 
 ### std::error::Error Implementasyonu
 
@@ -246,7 +246,7 @@ impl From<std::io::Error> for ParseError {
 }
 ```
 
-Bu boilerplate her hata tipi için aynıdır. İşte bu yüzden **thiserror** vardır.
+Bu boilerplate her hata tipi için aynıdır. İşte bu yüzden **thiserror** diye bir crate var.
 
 ### thiserror Crate
 
@@ -272,11 +272,11 @@ pub enum ParseError {
 `#[error(transparent)]` → `source()` ve `Display`'i içteki hataya yönlendirir
 `#[from]` → `From<T>` implementasyonu
 
-**thiserror, library code'lar için standarttır.** Bir kütüphane yazıyorsanız, hata tiplerinizi `thiserror::Error` ile tanımlayın.
+**thiserror, library kodları için standarttır.** Bir kütüphane yazıyorsanız, hata tiplerinizi `thiserror::Error` ile tanımlayın.
 
 ### Error Enum'ları
 
-Hata enum'ları iki desende gelir:
+Hata enum'ları genelde iki desende gelir:
 
 **1. Tek seviyeli (düz enum):** Her varyant kendi hatasını taşır.
 
@@ -400,7 +400,7 @@ Bir uygulamada hata katmanları şöyle işler:
 ```
 
 - **Persistence layer**: SQLx/Redis'ten gelen hataları `RepositoryError` enum'ına dönüştürür (thiserror)
-- **Service layer**: Business logic hatalarını `ServiceError` olarak tanımlar, `RepositoryError`'u kapsüller
+- **Service layer**: Business logic hatalarını `ServiceError` olarak tanımlar, `RepositoryError`'u içerir
 - **HTTP API layer**: `anyhow` kullanır, hataları HTTP status code ve JSON response'a dönüştürür
 
 ```rust
@@ -452,7 +452,7 @@ fn report_chain(err: &(dyn std::error::Error)) {
 
 ### Hataları Ignore Etme
 
-Her hata ele alınmak zorunda değildir. Sadece durumun önemli olduğu kadar:
+Her hatayı ele almak zorunda değilsiniz. Önem sırasına göre hareket edin:
 
 ```rust
 // Log at, ama akışı durdurma
@@ -586,7 +586,7 @@ let data = fetch_data().ok()?;  // Err ise None, ne olduğu belli değil
 // İYİ: en azından log
 let data = fetch_data().inspect_err(|e| tracing::warn!("fetch_data failed: {e}")).ok()?;
 
-// DAHA İYİI: hatayı içeren bir context ver
+// DAHA İYİ: hatayı içeren bir context ver
 let data = fetch_data().context("fetching initial data")?;
 ```
 
@@ -622,7 +622,7 @@ pub struct MyError(String);  // String zaten Send + Sync
 pub struct MyError(Box<dyn std::error::Error + Send + Sync>);
 ```
 
-Kural: Error tipleriniz her zaman `Send + Sync` olsun. `thiserror` derive'ı varsayılan olarak bunu yapmaz, eklemeniz gerekmez — tüm alanlar `Send + Sync` ise enum da öyledir.
+Kural: Error tipleriniz her zaman `Send + Sync` olsun. `thiserror` derive'ının ayrıca bir şey yapması gerekmez — tüm alanlar `Send + Sync` ise enum da zaten öyledir.
 
 ### 4. Library Kodunda panic
 
@@ -644,7 +644,7 @@ pub fn parse(input: &str) -> Result<ParsedData, ParseError> {
 }
 ```
 
-Bir library asla kullanıcısına panic fırlatmaz. Panic sadece programcı hatasıdır — library kullanıcısı bir programcı hatası yaptıysa `unwrap()` çağıran odur, library değil.
+Bir library asla kullanıcısına panic fırlatmaz. Panic sadece programcı hatasıdır — eğer library kullanıcısı bir hata yaptıysa `unwrap()` çağıran odur, library değil.
 
 ## Özet
 

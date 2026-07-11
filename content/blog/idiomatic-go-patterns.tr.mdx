@@ -7,11 +7,11 @@ excerpt: "Go'yu Go gibi yazmak — hata yönetimi felsefesinden interface tasar�
 
 ## Giriş: Go Felsefesi
 
-Go'nun tasarımı üç kelimeye indirgenebilir: **simplicity, readability, composition.** 25 anahtar kelime, minimal syntax, özel DSL yok. Kazanç: ekip içi okunabilirlik. Go, inheritance yerine composition'ı, hiyerarşi yerine interface'leri, framework yerine standard library'yi seçer.
+Go'nun tasarım felsefesi üç kelime: **simplicity, readability, composition.** 25 anahtar kelime, minimal syntax, özel DSL yok. Kazanç: ekip içi okunabilirlik. Go, inheritance yerine composition'ı, hiyerarşi yerine interface'leri, framework yerine standard library'yi seçer.
 
 ## Error Handling: errors are values
 
-Temel felsefe: **hatalar değerdir**, exception değil. `if err != nil` bir desen değil, zorunluluktur.
+Temel felsefe: **hatalar değerdir**, exception değildir. `if err != nil` bir desen değil, bir gerekliliktir.
 
 ### Sentinel, Error Type, Opaque
 
@@ -21,7 +21,7 @@ Temel felsefe: **hatalar değerdir**, exception değil. `if err != nil` bir dese
 | Error type | `NotFoundError` | `errors.As` |
 | Opaque | Sadece başarı/başarısız | `err != nil` |
 
-Sentinel'ler public API'nin parçasıdır — kararlı durumlar için saklayın. Opaque errors en modüler yapıyı sağlar; çağıran hata detayını bilmez.
+Sentinel'ler public API'nin parçasıdır — bunları kararlı ve değişmeyecek durumlar için kullanın. Opaque errors en modüler yapıyı sağlar; çağıran hata detayını bilmez.
 
 ### errors.Is, errors.As ve Wrapping
 
@@ -31,11 +31,11 @@ var nf *NotFoundError
 if errors.As(err, &nf) { /* entity bulunamadı */ }
 ```
 
-`fmt.Errorf("dosya açılamadı: %w", err)` ile her katman bağlam ekler. Unwrap zinciri sayesinde çağıran tüm katmanları görebilir.
+`fmt.Errorf("dosya açılamadı: %w", err)` ile her katman kendi bağlamını ekler. Çağıran taraf unwrap zincirinde tüm katmanları görebilir.
 
 ### panic ve recover
 
-`panic` sadece **imkansız durumlar** içindir — programlama hatası, invariant ihlali. `recover` yalnızca cleanup amaçlıdır, control flow için kullanılmaz. Bir goroutine'de panic tüm programı çökertir.
+`panic` sadece **imkansız durumlar** içindir — programlama hatası ya da invariant ihlali gibi. `recover` yalnızca cleanup amaçlıdır, asla control flow için kullanmayın. Unutmayın: bir goroutine'de panic tüm programı çökertir.
 
 ## Interface Tasarımı
 
@@ -43,16 +43,16 @@ Go interface'leri örtük (implicit) implemente edilir. Bu, interface'leri **tü
 
 **Accept interfaces, return structs** — parametre olarak interface al, somut tip döndür. Dönüş tipi somut olur, çağıranın ekstra metotlara erişimi kalır.
 
-**Küçük interface'ler** — `io.Reader` (1 metod), `io.Writer` (1 metod). Büyük interface'ler bağımlılığı katılaştırır. Kullanım senaryolarına bölün:
+**Küçük interface'ler** — `io.Reader` (1 metod), `io.Writer` (1 metod). Büyük interface'ler bağımlılığı artırır, esnekliği azaltır. Interface'leri kullanım senaryolarına göre ayırın:
 
 ```go
 type UserReader interface { Get(ctx, id) (*User, error) }
 type UserWriter interface { Create(ctx, *User) error }
 ```
 
-Interface, onu **kullanan** pakette tanımlanır, üreten değil. Bu sayede producer'ın interface'e bağımlılığı olmaz, testler kolaylaşır.
+Interface, onu **kullanan** pakette tanımlanır, üreten pakette değil. Bu sayede producer'ın interface'e bağımlılığı olmaz, testler kolaylaşır.
 
-`any` (Go 1.18+) her şeyi kabul eder — JSON unmarshal, log parametreleri dışında kaçının. Type assertion ile opsiyonel davranış yoklayın:
+`any` (Go 1.18+) her şeyi kabul eder — JSON unmarshal ve log parametreleri dışında kullanmaktan kaçının. Opsiyonel davranışlar için type assertion kullanın:
 
 ```go
 switch v := v.(type) {
@@ -87,13 +87,13 @@ func NewServer(addr string, opts ...Option) *Server {
 }
 ```
 
-Builder pattern ise validation ve bağımlı alanlar için tercih edilir.
+Builder pattern ise validation ve zorunlu alanlar için tercih edilir.
 
 ## HTTP Server Pattern'leri
 
 ### Middleware Chaining
 
-`http.Handler` interface'i ve `http.HandlerFunc` tipi ile middleware'ler bir Handler alıp Handler döndürür:
+`http.Handler` interface'i ve `http.HandlerFunc` tipi sayesinde middleware'ler bir Handler alıp yeni bir Handler döndüren fonksiyonlardır:
 
 ```go
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
@@ -119,7 +119,7 @@ defer cancel()
 srv.Shutdown(shutdownCtx)
 ```
 
-Graceful shutdown olmadan deployment'larda bağlantı kopmaları yaşarsınız. Context ile cancellation, timeout ve kullanıcı kimliği zincirde taşınır.
+Graceful shutdown olmadan deployment'larda bağlantı kopmaları yaşarsınız. Context ile cancellation, timeout ve kullanıcı kimliği gibi bilgiler zincir boyunca taşınır.
 
 ### httptest
 
@@ -137,7 +137,7 @@ assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 ### errgroup (x/sync)
 
-Goroutine grubunun ilk hatada durması, context cancellation ve sınırlı parallelism:
+Goroutine grubu ilk hatada durur, context cancellation sağlar ve parallelism sınırlar:
 
 ```go
 g, ctx := errgroup.WithContext(context.Background())
@@ -193,7 +193,7 @@ Subtests ile biri kırıldığında diğerleri çalışmaya devam eder. `-run` f
 
 ### Golden Files ve Build Tags
 
-Golden files snapshot test sağlar — `testdata/*.golden` içinde beklenen çıktı tutulur, `-update` flag'i ile yeniden yazılır. Build tag'ler (`//go:build integration`) ile integration test'leri ayrıştırın.
+Golden files ile snapshot testi yapabilirsiniz — `testdata/*.golden` içinde beklenen çıktı tutulur, `-update` flag'i ile yeniden yazılır. Build tag'ler (`//go:build integration`) ile integration test'leri ayrıştırın.
 
 ## Production Readiness
 
@@ -207,7 +207,7 @@ slog.Info("sunucu başlatıldı", "addr", ":8080", "env", "production")
 slog.Error("bağlantı hatası", "err", err)
 ```
 
-Go 1.21+ ile gelen slog, JSON formatında leveled logging sağlar. Production'da `fmt.Println` yoktur. Slog çıktısı Loki, Datadog, CloudWatch ile uyumludur.
+Go 1.21+ ile gelen slog, JSON formatında leveled logging sağlar. Production'da `fmt.Println` kullanılmaz, onun yerine slog tercih edilir. Slog çıktısı Loki, Datadog, CloudWatch ile uyumludur.
 
 ### Konfigürasyon
 
@@ -242,4 +242,4 @@ Environment variable'lar 12-factor app standardıdır. Struct'ta toplamak test e
 | Test | Table-driven, golden files, build tags |
 | Production | slog, env config |
 
-İdiyomatik Go yazmak, dili kısıtlamalarıyla kabul etmekle başlar. Exception yok — hataları işleyin. Inheritance yok — compose edin. Framework yok — standard library yeter. Go'yu Go gibi yazın: basit, okunabilir, birleştirilebilir.
+İdiyomatik Go yazmak, dilin kısıtlamalarını kabullenmekle başlar. Exception yok — hataları doğrudan işleyin. Inheritance yok — composition kullanın. Framework yok — standard library yeter. Go'yu Go gibi yazın: basit, okunabilir, birleştirilebilir.
