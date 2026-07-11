@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-surface: #0a0a0a;
+  --color-surface-alt: #141414;
+  --color-surface-hover: #1f1f1f;
+  --color-border: #262626;
+  --color-border-bright: #404040;
+  --color-accent: #f5f5f5;
+  --color-accent-dim: #a3a3a3;
+  --color-accent-glow: rgba(255, 255, 255, 0.06);
+  --color-muted: #737373;
+  --color-foreground: #f5f5f5;
+  --color-foreground-dim: #a3a3a3;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-tag-bg: rgba(255, 255, 255, 0.06);
+  --color-tag-fg: #a3a3a3;
+  --color-tag-border: rgba(255, 255, 255, 0.1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--color-surface);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--color-foreground);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-bright);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted);
+  }
+
+  a {
+    color: var(--color-foreground);
+    transition: opacity 0.15s;
+  }
+
+  a:hover {
+    opacity: 0.7;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    color: var(--color-foreground);
+  }
+
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+  }
+
+  pre code {
+    background: transparent;
+    padding: 0;
+    border: none;
+    color: var(--color-foreground);
+  }
+
+  /* MDX content styling */
+  .prose-custom h1,
+  .prose-custom h2,
+  .prose-custom h3,
+  .prose-custom h4 {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .prose-custom h1 {
+    font-size: 1.75rem;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    color: var(--color-foreground);
+  }
+
+  .prose-custom h2 {
+    font-size: 1.35rem;
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 0.4rem;
+    color: var(--color-foreground);
+  }
+
+  .prose-custom h3 {
+    font-size: 1.1rem;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-custom p {
+    margin-bottom: 1rem;
+    line-height: 1.75;
+    color: var(--color-foreground-dim);
+  }
+
+  .prose-custom ul,
+  .prose-custom ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+    color: var(--color-foreground-dim);
+  }
+
+  .prose-custom li {
+    margin-bottom: 0.35rem;
+  }
+
+  .prose-custom blockquote {
+    border-left: 2px solid var(--color-foreground-dim);
+    padding-left: 1rem;
+    margin: 1.25rem 0;
+    color: var(--color-muted);
+    font-style: italic;
+  }
+
+  .prose-custom a {
+    color: var(--color-foreground);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+  }
+
+  .prose-custom a:hover {
+    opacity: 0.7;
+  }
+
+  .prose-custom img {
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    margin: 1.5rem 0;
+  }
+
+  .prose-custom hr {
+    border-color: var(--color-border);
+    margin: 2rem 0;
+  }
+
+  .prose-custom table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+  }
+
+  .prose-custom th,
+  .prose-custom td {
+    border: 1px solid var(--color-border);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+
+  .prose-custom th {
+    background: var(--color-surface-alt);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-foreground);
+  }
+
+  .prose-custom td {
+    color: var(--color-foreground-dim);
+  }
+
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+
+  .cursor-blink {
+    animation: blink 1s step-end infinite;
+  }
+
+  .neon-border {
+    border: 1px solid var(--color-border-bright);
+  }
+}

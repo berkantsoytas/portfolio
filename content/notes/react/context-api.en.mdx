@@ -1,0 +1,36 @@
+---
+title: "Context API Usage"
+---
+
+## Basic Structure
+
+```tsx
+import { createContext, useContext } from "react";
+
+const ThemeContext = createContext<Theme>("dark");
+
+function App() {
+  return (
+    <ThemeContext.Provider value="light">
+      <Child />
+    </ThemeContext.Provider>
+  );
+}
+
+function Child() {
+  const theme = useContext(ThemeContext);
+  return <div>{theme}</div>;
+}
+```
+
+## When to Use?
+
+- Global state like theme, locale, auth
+- Avoid prop drilling
+- For frequently changing state, prefer **redux/zustand**
+
+## Performance Tips
+
+- Keep Provider as low as possible
+- Wrap state with `useMemo`
+- Split context instead of large objects

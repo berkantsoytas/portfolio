@@ -1,0 +1,155 @@
+---
+title: "Building Resilient Distributed Systems"
+date: "2026-07-14"
+tags: ["distributed-systems", "resilience", "architecture", "patterns"]
+excerpt: "Error management in distributed systems using circuit breakers, retries, backpressure, and other resilience patterns."
+---
+
+## Failure is Inevitable
+
+Network partitions, node failures, latency spikes — these are normal. What matters is how your system handles them gracefully.
+
+## Resilience Patterns
+
+### 1. Circuit Breaker
+
+When the error rate exceeds the threshold, the circuit opens and requests are fast-rejected:
+
+```typescript
+class CircuitBreaker {
+    private state: "closed" | "open" | "half-open" = "closed";
+    private failureCount = 0;
+    private lastFailureTime: number = 0;
+
+    constructor(
+        private readonly threshold: number,
+        private readonly resetTimeout: number,
+    ) {}
+
+    async call<T>(fn: () => Promise<T>): Promise<T> {
+        if (this.state === "open") {
+            if (Date.now() - this.lastFailureTime > this.resetTimeout) {
+                this.state = "half-open";
+            } else {
+                throw new Error("Circuit breaker is open");
+            }
+        }
+
+        try {
+            const result = await fn();
+            this.failureCount = 0;
+            this.state = "closed";
+            return result;
+        } catch (err) {
+            this.failureCount++;
+            this.lastFailureTime = Date.now();
+            if (this.failureCount >= this.threshold) {
+                this.state = "open";
+            }
+            throw err;
+        }
+    }
+}
+```
+
+### 2. Retry with Exponential Backoff
+
+```typescript
+async function retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    baseDelay = 100,
+): Promise<T> {
+    for (let i = 0; i <= maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            if (i === maxRetries) throw err;
+            const delay = baseDelay * Math.pow(2, i) + Math.random() * 100;
+            await sleep(delay);
+        }
+    }
+    throw new Error("Unreachable");
+}
+```
+
+### 3. Bulkhead
+
+Separate thread pools or resource pools for different components:
+
+```typescript
+const exchangePool = new Limit({ concurrency: 5 });
+const blockchainPool = new Limit({ concurrency: 3 });
+
+// Exchange requests use their own pool, blockchain uses its own
+// One pool exhausting doesn't affect the other
+```
+
+### 4. Timeout
+
+Every external call must have a timeout:
+
+```typescript
+async function withTimeout<T>(
+    fn: () => Promise<T>,
+    ms: number,
+): Promise<T> {
+    const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    );
+    return Promise.race([fn(), timeout]) as Promise<T>;
+}
+```
+
+### 5. Health Check API
+
+Every service exposes a health check endpoint:
+
+```go
+func HealthHandler(w http.ResponseWriter, r *http.Request) {
+    status := map[string]string{
+        "database":   checkDB(),
+        "kafka":      checkKafka(),
+        "redis":      checkRedis(),
+        "blockchain": checkBlockchainNode(),
+    }
+
+    healthy := true
+    for _, s := range status {
+        if s != "ok" {
+            healthy = false
+        }
+    }
+
+    if !healthy {
+        w.WriteHeader(http.StatusServiceUnavailable)
+    }
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "status":  status,
+        "healthy": healthy,
+    })
+}
+```
+
+## Real World Scenario
+
+A scenario I encountered in blockchain infrastructure:
+
+1. **Node went down** → Circuit breaker opened, new operations queued
+2. **Retry mechanism** → Switched to backup node
+3. **Bulkhead** → Exchange operations continued unaffected
+4. **Monitoring** → Alert received within 10 seconds, automatic failover triggered
+
+Result: Zero user impact, full recovery in 30 seconds.
+
+## Summary
+
+| Pattern | When | Purpose |
+|---------|------|---------|
+| Circuit Breaker | Fast error detection | Prevents cascade failures |
+| Retry | Transient errors | Self-healing |
+| Bulkhead | Resource isolation | Prevents one component from bringing down the system |
+| Timeout | Wait time control | Prevents hangs |
+| Health Check | System status | Load balancer and monitoring |
+
+Remember: In a distributed system, everything is wrong until proven correct.

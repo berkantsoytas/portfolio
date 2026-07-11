@@ -1,0 +1,135 @@
+---
+title: "System Design for Blockchain Infrastructure"
+date: "2026-07-12"
+tags: ["distributed-systems", "architecture", "blockchain", "system-design"]
+excerpt: "Architectural decisions for designing highly available blockchain infrastructure."
+---
+
+## Architectural Goals
+
+Three core goals when designing blockchain infrastructure:
+
+1. **High Availability** — System must work even when nodes go down
+2. **Data Consistency** — Blockchain data must never be lost
+3. **Low Latency** — Critical for real-time operations
+
+## Node Architecture
+
+### Multi-Node Strategy
+
+Relying on a single blockchain node is dangerous:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Primary Node │────▶│ Secondary   │────▶│ Backup      │
+│ (read/write) │     │ Node (read) │     │ Node (sync) │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+- **Primary**: Transaction sending, write operations
+- **Secondary**: Data reading, event streaming
+- **Backup**: Sync mode, for emergencies
+
+### Node Health Monitoring
+
+```typescript
+interface NodeHealth {
+    synced: boolean;
+    blockDelay: number;
+    peerCount: number;
+    lastBlockTime: number;
+    errorRate: number;
+}
+
+function isNodeHealthy(health: NodeHealth): boolean {
+    return (
+        health.synced &&
+        health.blockDelay < 3 &&
+        health.peerCount > 3 &&
+        health.errorRate < 0.01
+    );
+}
+```
+
+## Data Consistency
+
+### Read-Your-Writes Consistency
+
+After sending a transaction:
+
+```typescript
+async function sendAndWait(tx: Transaction): Promise<Receipt> {
+    const txId = await primaryNode.send(tx);
+
+    for (let i = 0; i < 30; i++) {
+        const receipt = await secondaryNode.getTransaction(txId);
+        if (receipt) return receipt;
+        await sleep(1000);
+    }
+
+    throw new Error("Transaction timeout");
+}
+```
+
+### Living with Eventual Consistency
+
+Eventual consistency between blockchain nodes is normal:
+
+- Writes go to primary
+- Reads go to secondary (with read-your-writes guarantee)
+- Critical operations read directly from primary
+
+## Disaster Recovery
+
+### Multi-Region Deployment
+
+```
+Region A (Istanbul)
+├── Primary Node
+├── Secondary Node
+└── Application Server
+
+Region B (Frankfurt)
+├── Secondary Node
+└── Application Server (standby)
+
+Region C (Moscow)
+└── Backup Node
+```
+
+### Failover Playbook
+
+```
+1. Primary node health check fail → wait 3s
+2. Retry 2 more times → still failing
+3. Promote secondary to primary → update DNS
+4. Provision new secondary
+5. Promote backup to secondary
+6. Alert operations team
+```
+
+## Monitoring & Alerting
+
+```prometheus
+# Critical metrics
+blockchain_node_synced 1
+blockchain_block_delay_seconds 2
+blockchain_peer_count 12
+blockchain_transaction_pool_size 45
+blockchain_error_rate 0.001
+
+# Alert rules
+ALERT NodeOutOfSync
+  IF blockchain_node_synced == 0
+  FOR 30s
+  LABELS { severity: "critical" }
+
+ALERT HighBlockDelay
+  IF blockchain_block_delay_seconds > 10
+  FOR 1m
+  LABELS { severity: "warning" }
+```
+
+## Summary
+
+The real challenge in blockchain infrastructure isn't the blockchain itself — it's the distributed systems layer around it. Node management, data consistency, failover, and monitoring — that's the actual work of blockchain infrastructure.

@@ -1,0 +1,303 @@
+---
+title: "Go Under the Hood: Memory, GC, and Performance Tuning"
+date: "2026-07-20"
+tags: ["go", "performance", "architecture", "backend"]
+excerpt: "Understanding Go's memory model, garbage collector internals, escape analysis, and performance optimization techniques — from stack vs heap allocation to GC tuning and pprof profiling."
+---
+
+## Introduction
+
+Go sells itself as "fast enough by default" — and for most services, it is. The compiler produces static binaries, goroutines are cheap, and the GC keeps pause times under milliseconds. But when you push into high-throughput data pipelines, real-time systems, or latency-sensitive API tiers, the default contract breaks. Allocation rates balloon, GC pressure spikes, and your service's latency distribution widens.
+
+Understanding Go's memory model from the bottom up — stack vs heap, escape analysis, GC internals, and the profiling toolkit — is mandatory for anyone tuning production Go systems.
+
+## Stack vs Heap Allocation
+
+Go allocates on the stack when the compiler can prove the variable does not escape the function scope. Stack allocation is free (a single SP adjustment) and requires no GC involvement. Heap allocation is expensive: it costs allocation, GC scanning, and eventual deallocation.
+
+### Escape Analysis
+
+The compiler runs escape analysis at compile time. If a variable's address is returned, stored in a global, captured by a closure, or passed to an interface parameter, it escapes to the heap.
+
+```go
+func stack() int { x := 42; return x }          // stays on stack
+func heap() *int { x := 42; return &x }         // escapes to heap
+```
+
+**Cases that force heap allocation:**
+
+| Case | Why |
+|------|-----|
+| Returning a pointer to a local variable | The variable outlives the function frame |
+| Storing a pointer in an interface value | Interface values hold a dynamic type — the concrete value must be on the heap |
+| Closure capturing a variable by reference | The closure outlives the enclosing function |
+| `defer` referencing a variable | `defer` arguments are evaluated immediately but execution is deferred — heap-escaped |
+| Large structs (heuristic) | The compiler may decide to heap-allocate structs exceeding a size threshold to avoid stack overflow |
+| `go` goroutine with captured variables | Goroutine stack is separate from the caller's |
+
+Use `-gcflags="-m"` to see escape decisions:
+
+```bash
+go build -gcflags="-m" ./pkg/... 2>&1 | grep escapes
+```
+
+Example output: `./main.go:12:6: moved to heap: buf`
+
+### Pointer vs Value Trade-offs
+
+Returning a value copies it (cost: `sizeof(T)` bytes copied). Returning a pointer escapes to heap (cost: allocation + GC scan). For small structs, values are faster. For large structs, pointers win, but the allocation cost must be amortized.
+
+Benchmark: a 24-byte struct returned by value vs pointer — value is ~3x faster and produces zero allocs.
+
+## Garbage Collector Deep Dive
+
+Go's GC is a **concurrent, tri-color mark-sweep** collector. It is **non-generational** (no young/old distinction) and **non-compacting** (no object relocation). This design prioritizes low and predictable latency over maximum throughput.
+
+### GC Algorithm: Tri-Color Mark-Sweep
+
+Objects are colored:
+
+- **White** — unvisited (candidate for collection)
+- **Grey** — reachable but not yet scanned
+- **Black** — reachable and fully scanned
+
+The collector starts from root objects (globals, goroutine stacks), marks them grey, then iteratively scans grey objects, turning reachable whites to grey and scanned objects to black. When the grey queue empties, remaining white objects are swept.
+
+### GC Cycle Phases
+
+1. **Mark Setup** — STW (~10-30 µs): enables write barrier, starts GC goroutines
+2. **Marking** — Concurrent (~CPU * heap live / scan rate): the bulk of GC work, runs on dedicated Gs
+3. **Mark Termination** — STW (~60-200 µs): drains remaining grey work, disables write barrier
+4. **Sweep** — Lazy, concurrent: reclaims memory of white objects
+
+The two STW pauses are short (sub-millisecond for most heaps). The real cost is the marking phase, which steals CPU from your application goroutines.
+
+### Write Barrier
+
+During concurrent marking, mutator goroutines may mutate the object graph. The write barrier intercepts pointer writes to ensure no reachable object is missed: if a black object acquires a pointer to a white object, the white object is immediately shaded grey.
+
+Without the write barrier, the concurrent GC could free live objects — a classic concurrent GC correctness problem.
+
+### GC Pacing
+
+The GC trigger is governed by the **GC trigger ratio**, derived from `GOGC`:
+
+```
+trigger = live_memory + live_memory * GOGC / 100
+```
+
+When heap size reaches the trigger, the next cycle begins. With `GOGC=100`, the heap can double between cycles — maximum 2x growth before GC runs.
+
+The GC pacing formula:
+
+```
+total_GC_cost ≈ (heap_live / scan_rate) * num_cores
+```
+
+Where `scan_rate` is ~4 GB/core/sec (varies by Go version and pointer density). Each GC cycle scans the entire live heap — no generational optimization means you pay proportional to heap size every cycle.
+
+## GC Tuning
+
+### GOGC (Default 100)
+
+`GOGC` sets the target heap growth percentage between cycles:
+
+- **Lower GOGC** (e.g., 25) — more frequent GC, lower peak memory, higher CPU
+- **Higher GOGC** (e.g., 400) — less frequent GC, higher peak memory, lower CPU
+- **GOGC=off** — disables GC entirely; use only for short-lived batch jobs
+
+```bash
+GOGC=200 ./my-server
+```
+
+Rule of thumb: if your service has idle CPU headroom and memory pressure, increase GOGC. If latency spikes from GC CPU stealing are visible, leave GOGC at default and work on allocation reduction first.
+
+### GOMEMLIMIT (Go 1.19+)
+
+A soft hard limit on total heap memory:
+
+```go
+debug.SetMemoryLimit(500 << 20) // 500 MB
+```
+
+The GC runs more aggressively when nearing the limit. Unlike `GOGC` (proportional growth), `GOMEMLIMIT` caps absolute memory. Useful for containerized workloads with fixed memory allocations.
+
+### gctrace
+
+Enable GC logging:
+
+```bash
+GODEBUG=gctrace=1 ./my-server
+```
+
+```
+gc 10 @8.021s 0%: 0.018+0.23+0.016 ms clock, 0.22+0.83/0.43/0.092+0.19 ms cpu, 4->4->1 MB, 5 MB goal, 12 P
+```
+
+Fields: GC cycle, elapsed, CPU fraction, STW phases, heap before->after->live, goal, procs.
+
+### When to Tune GC
+
+Do not tune GC prematurely. First: measure allocation rates and reduce them. GC tuning is the last lever, not the first. Only tune when:
+
+- GC CPU exceeds 15-20% of total CPU (visible in pprof)
+- Memory overshoots container limits (OOMKilled)
+- Latency tails degrade due to GC marking stealing CPU
+
+## Memory Optimization Techniques
+
+### sync.Pool
+
+Reuses temporary objects, amortizing allocation cost across goroutines. The pool automatically evicts under GC pressure — it is not a cache, it is a contention-optimized allocator:
+
+```go
+var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func handle(r *http.Request) {
+    buf := bufPool.Get().(*bytes.Buffer)
+    buf.Reset()
+    defer bufPool.Put(buf)
+    // use buf
+}
+```
+
+### Pre-allocation
+
+Specify capacity for slices and maps when you know the size:
+
+```go
+s := make([]int, 0, 1000)     // single allocation
+m := make(map[int]int, 1000)  // avoids rehashing
+```
+
+A slice append without pre-allocation doubles capacity on each grow — worst-case O(n) allocations and copies.
+
+### Struct Size and Alignment
+
+Go aligns fields to their natural boundaries (1, 2, 4, 8 bytes). Reorder fields to minimize padding:
+
+```go
+type Bad struct { // 32 bytes (3 padding gaps)
+    a bool    // 1 + 7 padding
+    b int64   // 8
+    c bool    // 1 + 7 padding
+}
+
+type Good struct { // 16 bytes (0 padding gaps)
+    a bool    // 1
+    c bool    // 1 + 6 padding
+    b int64   // 8
+}
+```
+
+`Good` is half the size — fewer allocations and less GC scanning.
+
+### Pointer vs Value Receiver
+
+Value receivers copy the struct on each call — expensive for large types. Pointer receivers avoid the copy but may cause escape. Use pointer receivers for mutating methods and value receivers for small, immutable types.
+
+### Buf Pool Pattern
+
+Reuse byte buffers in hot paths instead of allocating new ones:
+
+```go
+type BufPool struct {
+    pool sync.Pool
+}
+
+func (bp *BufPool) Get() []byte {
+    buf := bp.pool.Get().([]byte)
+    return buf[:0]
+}
+
+func (bp *BufPool) Put(buf []byte) {
+    bp.pool.Put(buf)
+}
+```
+
+## Profiling and Benchmarking
+
+### pprof
+
+Import `net/http/pprof` (or use `runtime/pprof` for CLI tools):
+
+```bash
+go tool pprof http://localhost:6060/debug/pprof/heap
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+go tool pprof http://localhost:6060/debug/pprof/goroutine
+go tool pprof http://localhost:6060/debug/pprof/mutex
+```
+
+**Heap profile** shows allocation hot spots (use `-alloc_space` to see total allocations, not just live:
+
+```bash
+go tool pprof -alloc_space http://localhost:6060/debug/pprof/heap
+```
+
+### Execution Tracer
+
+```bash
+go test -trace trace.out ./pkg/... && go tool trace trace.out
+```
+
+Visualizes goroutine lifecycle, GC events, network blocking, and syscall latency. Use when pprof shows high `runtime.gcBgMarkWorker` or `runtime.mallocgc` CPU.
+
+### Writing Benchmarks
+
+```go
+func BenchmarkHotPath(b *testing.B) {
+    data := generateData(1000)
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        result := process(data)
+        _ = result
+    }
+}
+```
+
+Run with alloc reporting:
+
+```bash
+go test -bench=. -benchmem ./pkg/
+```
+
+Results show `allocs/op` and `bytes/op`. Compare across versions with `benchstat`.
+
+## Performance Anti-patterns
+
+| Anti-pattern | Fix | Improvement |
+|-------------|-----|-------------|
+| `s += "x"` in loop | `strings.Builder` | O(n²) → O(n), zero allocs per iteration |
+| `fmt.Sprintf("%d", i)` | `strconv.Itoa(i)` | No reflect-based arg decoding |
+| `interface{}` boxing on hot path | Generics (Go 1.18+) or typed codegen | Zero escape, inlineable |
+| Reflection-based serialization | Code-generated marshal/unmarshal | 10-100x faster |
+| Defers in tight loops | Manual cleanup before loop body | Avoids defer allocation overhead |
+
+## Real-World Case: High-Throughput Data Pipeline
+
+A WebSocket event processor ingesting 100k events/sec showed 35% CPU in GC. The pipeline: read → unmarshal → enrich → marshal → publish.
+
+**Allocation profile:** 6 allocs per event — JSON decode buffer, enrichment struct, response buffer, three intermediate slices.
+
+**Optimizations applied:**
+
+1. **Buffer reuse**: Replaced per-event allocations with `sync.Pool` for decode and encode buffers — eliminated 3 allocs per event
+2. **Pre-allocated results**: Estimated output size from input size (JSON marshal overhead ~30%) and pre-allocated bytes.Buffer capacity
+3. **Sharded mutexes**: Replaced a global `sync.Mutex` on a shared lookup table with 64 shards (`[64]sync.Mutex` + hash mod shard) — contention dropped 90%
+4. **In-place JSON decode**: Switched to `json.Decoder` reusing a token buffer instead of `json.Unmarshal` allocating fresh maps
+
+**Result:** GC CPU dropped from 35% to 6%, throughput doubled, and P99 latency halved. No GOGC changes — allocation reduction fixed the problem.
+
+## Summary
+
+| Concept | Key takeaway |
+|---------|-------------|
+| Stack vs heap | Escape analysis decides; check with `-gcflags="-m"` |
+| GC algorithm | Concurrent tri-color mark-sweep, non-generational, non-compacting |
+| GC tuning | `GOGC` for growth ratio, `GOMEMLIMIT` for hard cap, `gctrace` for monitoring |
+| sync.Pool | Reuse high-churn objects, resets between acquires |
+| Profiling | pprof for allocation CPU, tracer for GC/goroutine visualization |
+| Benchmarks | `-benchmem`, `allocs/op`, `benchstat` |
+| First rule of GC tuning | Reduce allocations before touching GOGC |
+
+Go's runtime gives you enough rope to build high-performance systems — but it expects you to know where the knots are. Measure first, allocate less, tune last.

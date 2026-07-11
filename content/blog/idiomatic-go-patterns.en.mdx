@@ -1,0 +1,489 @@
+---
+title: "Idiomatic Go: Error Handling, Interfaces, and Production Patterns"
+date: "2026-07-21"
+tags: ["go", "architecture", "backend", "patterns"]
+excerpt: "Writing Go that feels like Go — from error handling philosophy and interface design to graceful shutdown, middleware patterns, and testing strategies for production systems."
+---
+
+## Introduction
+
+Go was designed for clarity, not cleverness. The language's philosophy is baked into every
+design decision: simplicity over abstraction, readability over brevity, composition over
+inheritance. Rob Pike's famous maxim — "a little copying is better than a little dependency"
+— isn't just folklore; it's a practical constraint that shapes how production Go code is
+written.
+
+This post is for engineers who already know Go syntax but want to write Go that *feels* like
+Go. We'll cover error handling, interface design, composition patterns, HTTP server idioms,
+concurrency coordination, testing, and production readiness — the patterns that separate
+Go-shaped code from Java-or-Python-shaped code written in Go.
+
+---
+
+## Error Handling
+
+### Errors Are Values
+
+Go has no exceptions. Errors are values returned from functions — plain values you inspect,
+wrap, and propagate. This isn't an oversight; it's a deliberate design choice that makes
+error paths as explicit as success paths.
+
+```go
+// Bad: ignoring errors
+f, _ := os.Open("file.txt")
+
+// Good: explicit error handling
+f, err := os.Open("file.txt")
+if err != nil {
+    return fmt.Errorf("open file: %w", err)
+}
+```
+
+The `if err != nil` pattern is not boilerplate — it's a forcing function. Every error path
+is visible at the call site. No hidden exception stack unwinding, no catch blocks three
+levels up.
+
+### Sentinel Errors, Error Types, and Opaque Errors
+
+Three strategies exist for communicating errors across package boundaries:
+
+**Sentinel errors** — predefined error values like `io.EOF` or `sql.ErrNoRows`. Use them
+sparingly. They create a dependency between caller and callee, and they cannot carry
+context. Prefer them only for truly terminal, well-known conditions.
+
+```go
+var ErrNotFound = errors.New("resource not found")
+```
+
+**Error types** — structs implementing the `error` interface. Use when the caller needs
+to inspect structured fields (e.g., a retryable flag, a status code).
+
+```go
+type HTTPError struct {
+    StatusCode int
+    Message    string
+}
+func (e *HTTPError) Error() string { return e.Message }
+```
+
+**Opaque errors** — the default. Return `fmt.Errorf("...: %w", err)` and let the caller
+decide whether to inspect. Most errors should be opaque. This is the strongest contract:
+"something went wrong, but the internals are none of your business."
+
+### errors.Is and errors.As
+
+Use `errors.Is` to match sentinel errors, `errors.As` to extract error types from the
+wrapping chain. Both respect the wrapping chain introduced by `%w`.
+
+```go
+if errors.Is(err, io.EOF) { /* handle end of file */ }
+
+var httpErr *HTTPError
+if errors.As(err, &httpErr) {
+    log.Printf("status %d: %s", httpErr.StatusCode, httpErr.Message)
+}
+```
+
+### Panic and Recover
+
+Panics are for *programmer bugs* — nil pointer dereferences, out-of-bounds access,
+invalid invariants. Not for user input validation, not for network timeouts, not for
+"file not found." Use `recover` only in top-level goroutine cleanup (e.g., closing
+connections, flushing buffers). Never use recover for control flow — that's what errors
+are for.
+
+```go
+// Acceptable: top-level server goroutine cleanup
+defer func() {
+    if r := recover(); r != nil {
+        log.Error("server panicked", "recover", r)
+        conn.Close()
+    }
+}()
+```
+
+---
+
+## Interface Design
+
+### Accept Interfaces, Return Structs
+
+This is the single most cited Go idiom. Accepting interfaces decouples your function from
+its callers' concrete types. Returning structs avoids forcing callers to depend on an
+interface that may grow over time.
+
+```go
+// Accept interface, return struct
+func Process(ctx context.Context, storer Storage) *Result { ... }
+```
+
+### Small Interfaces
+
+The standard library's most powerful interfaces are one method each:
+
+```go
+type Reader interface { Read(p []byte) (n int, err error) }
+type Writer interface { Write(p []byte) (n int, err error) }
+type Closer interface { Close() error }
+```
+
+Small interfaces are naturally satisfied. A type that can read, write, and close satisfies
+three separate contracts without declaring any of them. This is the opposite of
+enterprise Java's sprawling `AbstractFactoryManager` hierarchies.
+
+### Consumer-Side Interface Definition
+
+Define interfaces where they are *consumed*, not where they are *produced*. The package
+that needs a `Storage` interface defines it; the package that implements it just exports
+its concrete type. This eliminates circular dependencies and keeps packages decoupled.
+
+```go
+// consumer/storage.go — defined by the consumer
+type Storage interface {
+    Get(ctx context.Context, key string) ([]byte, error)
+    Put(ctx context.Context, key string, data []byte) error
+}
+
+// producer/s3.go — no knowledge of the interface
+type S3Client struct { /* ... */ }
+func (c *S3Client) Get(ctx context.Context, key string) ([]byte, error) { ... }
+func (c *S3Client) Put(ctx context.Context, key string, data []byte) error { ... }
+```
+
+### The Empty Interface and Type Assertions
+
+`any` (formerly `interface{}`) is a last resort. It surrenders compile-time type safety.
+When you must use it, pair it with a type switch to recover concrete behavior:
+
+```go
+func format(v any) string {
+    switch x := v.(type) {
+    case string:
+        return x
+    case int:
+        return strconv.Itoa(x)
+    case fmt.Stringer:
+        return x.String()
+    default:
+        return fmt.Sprintf("%v", x)
+    }
+}
+```
+
+Type assertions (`x.(T)`) are a code smell outside of type switches. If you're asserting
+a concrete type, your interface is probably too broad.
+
+---
+
+## Struct and Composition Patterns
+
+### Embedding Is Not Inheritance
+
+Go has no class hierarchy. Embedding a struct promotes its methods to the outer type, but
+there is no polymorphism, no virtual dispatch, no `super()`.
+
+```go
+type Base struct{ ID string }
+func (b *Base) String() string { return b.ID }
+
+type User struct {
+    Base          // promoted: User.String() exists
+    Name string
+}
+```
+
+Use embedding for *has-a* relationships, not *is-a*. If you find yourself overriding
+embedded methods, you're fighting the language — use an interface instead.
+
+### Functional Options
+
+The options pattern solves the problem of configuring a struct with many optional
+parameters without exploding into constructor overloads:
+
+```go
+type Server struct {
+    addr    string
+    timeout time.Duration
+    logger  *slog.Logger
+}
+
+type Option func(*Server)
+
+func WithTimeout(d time.Duration) Option {
+    return func(s *Server) { s.timeout = d }
+}
+
+func WithLogger(l *slog.Logger) Option {
+    return func(s *Server) { s.logger = l }
+}
+
+func NewServer(addr string, opts ...Option) *Server {
+    s := &Server{addr: addr, timeout: 30 * time.Second}
+    for _, opt := range opts {
+        opt(s)
+    }
+    return s
+}
+```
+
+This is the standard. It's extensible without breaking callers, and it avoids the
+constructor-overload problem endemic to languages without default parameters.
+
+---
+
+## HTTP Server Patterns
+
+### Handlers and Middleware
+
+`http.Handler` is a single-method interface. `http.HandlerFunc` is a function adapter.
+Middleware is a function that takes a Handler and returns a Handler:
+
+```go
+func Logging(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        next.ServeHTTP(w, r)
+        slog.Info("request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start))
+    })
+}
+```
+
+Chain them naturally: `Logging(Auth(RateLimit(handler)))`.
+
+### Graceful Shutdown
+
+Use `signal.NotifyContext` to propagate OS signals through the request lifecycle:
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+defer stop()
+
+srv := &http.Server{Addr: ":8080", Handler: mux}
+
+go func() {
+    if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+        log.Fatalf("listen: %v", err)
+    }
+}()
+
+<-ctx.Done()
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+srv.Shutdown(shutdownCtx)
+```
+
+This pattern gives in-flight requests a deadline to complete before the process exits.
+
+---
+
+## Concurrency Coordination
+
+### errgroup
+
+`golang.org/x/sync/errgroup` extends `sync.WaitGroup` with error propagation and context
+cancellation. Use it for bounded goroutine sets where one failure should cancel the rest:
+
+```go
+g, ctx := errgroup.WithContext(ctx)
+
+for _, url := range urls {
+    url := url
+    g.Go(func() error {
+        resp, err := http.Get(url)
+        if err != nil {
+            return fmt.Errorf("fetch %s: %w", url, err)
+        }
+        defer resp.Body.Close()
+        // process response...
+        return nil
+    })
+}
+
+if err := g.Wait(); err != nil {
+    // first error from any goroutine, context cancelled for all
+}
+```
+
+### sync.Once and sync.Pool
+
+`sync.Once` guarantees a function executes exactly once, even across goroutines. Use it
+for lazy singleton initialization:
+
+```go
+var conn *sql.DB
+var once sync.Once
+
+func DB() *sql.DB {
+    once.Do(func() {
+        conn = openConnection()
+    })
+    return conn
+}
+```
+
+`sync.Pool` caches allocated but idle objects, reducing GC pressure. Use it for
+short-lived, expensive-to-allocate objects like `bytes.Buffer` in request handlers.
+Never assume a pooled object retains its state between `Get` and `Put`.
+
+---
+
+## Testing Idioms
+
+### Table-Driven Tests
+
+Table-driven tests are the canonical Go testing pattern. Each row in the table is a
+test case with inputs and expected outputs:
+
+```go
+func TestParseDuration(t *testing.T) {
+    tests := []struct {
+        name  string
+        input string
+        want  time.Duration
+        err   bool
+    }{
+        {name: "seconds", input: "30s", want: 30 * time.Second},
+        {name: "minutes", input: "5m", want: 5 * time.Minute},
+        {name: "invalid", input: "xyz", err: true},
+    }
+    for _, tc := range tests {
+        t.Run(tc.name, func(t *testing.T) {
+            got, err := time.ParseDuration(tc.input)
+            if (err != nil) != tc.err {
+                t.Fatalf("unexpected error: %v", err)
+            }
+            if got != tc.want {
+                t.Errorf("got %v, want %v", got, tc.want)
+            }
+        })
+    }
+}
+```
+
+Subtests (`t.Run`) give you independent setup/teardown per case, readable output, and
+the ability to run a single case with `go test -run TestParseDuration/seconds`.
+
+### Golden Files and Test Fixtures
+
+For complex output (generated code, serialized data, HTTP responses), use golden files:
+
+```go
+func TestRender(t *testing.T) {
+    got := renderPage()
+    golden := filepath.Join("testdata", "page.golden")
+    if *update {
+        os.WriteFile(golden, got, 0644)
+    }
+    want, err := os.ReadFile(golden)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if !bytes.Equal(got, want) {
+        t.Errorf("output mismatch")
+    }
+}
+```
+
+Use a `-update` flag to regenerate golden files when the output intentionally changes.
+
+### Integration Tests with Build Tags
+
+Isolate integration tests behind `//go:build integration` tags. Run them separately from
+unit tests in CI:
+
+```go
+//go:build integration
+
+package db_test
+
+func TestPostgresConnection(t *testing.T) {
+    // requires running Postgres
+}
+```
+
+`go test -tags=integration ./...` runs the full suite; `go test ./...` skips it.
+
+---
+
+## Production Readiness
+
+### Structured Logging with log/slog
+
+Go 1.21 introduced `log/slog` — a structured logging API that replaces ad-hoc `fmt.Println`
+in production code. Use `slog.Info`, `slog.Error`, and always pass key-value pairs:
+
+```go
+slog.Info("request completed",
+    "method", r.Method,
+    "path", r.URL.Path,
+    "status", status,
+    "duration_ms", time.Since(start).Milliseconds(),
+)
+```
+
+Configure a JSON handler for production, a text handler for development:
+
+```go
+var handler slog.Handler
+if os.Getenv("ENV") == "production" {
+    handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+} else {
+    handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+}
+slog.SetDefault(slog.New(handler))
+```
+
+### Configuration from Environment
+
+Twelve-factor app style: configuration comes from environment variables, not config files.
+Use `os.Getenv` with defaults, or a lightweight library like `envconfig`:
+
+```go
+type Config struct {
+    Port    int           `env:"PORT" default:"8080"`
+    Timeout time.Duration `env:"TIMEOUT" default:"30s"`
+    DB      string        `env:"DATABASE_URL" required:"true"`
+}
+```
+
+### Middleware for Observability
+
+Every HTTP handler should be wrapped in middleware that provides request ID, latency,
+and error tracking. This keeps individual handlers clean and observability centralized:
+
+```go
+func RequestID(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        id := r.Header.Get("X-Request-ID")
+        if id == "" {
+            id = uuid.New().String()
+        }
+        ctx := context.WithValue(r.Context(), ctxKeyRequestID, id)
+        w.Header().Set("X-Request-ID", id)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+```
+
+### fmt vs log/slog
+
+`fmt.Println` and `log.Printf` are for throwaway scripts. In production code, use
+`slog` for structured output that log aggregators (Datadog, Grafana Loki, Splunk) can
+parse. Structured logs are searchable, filterable, and machine-readable. Unstructured
+logs are noise at scale.
+
+---
+
+## Conclusion
+
+Idiomatic Go is not about following a style guide — it's about embracing the language's
+constraints as design virtues. Errors are values, not exceptions. Interfaces are small
+and consumer-defined. Composition replaces inheritance. Concurrency is a first-class
+citizen, not an afterthought.
+
+The patterns here are not rules carved in stone. They are conventions that have emerged
+from a decade of production Go at Google, Stripe, Cloudflare, and elsewhere. Follow them
+until you have a concrete reason not to. Your future self — and your team — will thank
+you.
+
+*"Clear is better than clever."* — Go Proverbs

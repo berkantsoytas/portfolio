@@ -1,0 +1,136 @@
+---
+title: "Blokzincir Altyapısı için Sistem Tasarımı"
+date: "2026-07-12"
+tags: ["distributed-systems", "architecture", "blockchain", "system-design"]
+excerpt: "Yüksek erişilebilir blokzincir altyapısı tasarlarken dikkat edilmesi gereken mimari kararlar."
+---
+
+## Mimari Hedefler
+
+Blokzincir altyapısı tasarlarken üç temel hedef:
+
+1. **High Availability** — Node'lar düşse bile sistem çalışmalı
+2. **Data Consistency** — Blockchain verisi asla kaybolmamalı
+3. **Low Latency** — Real-time işlemler için gecikme kritik
+
+## Node Mimarisi
+
+### Multi-Node Stratejisi
+
+Tek bir blockchain node'una güvenmek tehlikelidir:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Primary Node │────▶│ Secondary   │────▶│ Backup      │
+│ (读写)       │     │ Node (read) │     │ Node (sync) │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+- **Primary**: Transaction gönderme, write işlemleri
+- **Secondary**: Veri okuma, event streaming
+- **Backup**: Sync modunda, acil durum için
+
+### Node Health Monitoring
+
+```typescript
+interface NodeHealth {
+    synced: boolean;
+    blockDelay: number;
+    peerCount: number;
+    lastBlockTime: number;
+    errorRate: number;
+}
+
+function isNodeHealthy(health: NodeHealth): boolean {
+    return (
+        health.synced &&
+        health.blockDelay < 3 &&
+        health.peerCount > 3 &&
+        health.errorRate < 0.01
+    );
+}
+```
+
+## Veri Tutarlılığı
+
+### Read-Your-Writes Consistency
+
+Transaction gönderdikten sonra okuma yaparken:
+
+```typescript
+async function sendAndWait(tx: Transaction): Promise<Receipt> {
+    const txId = await primaryNode.send(tx);
+
+    // Kendi transaction'ımızı secondary'den oku
+    for (let i = 0; i < 30; i++) {
+        const receipt = await secondaryNode.getTransaction(txId);
+        if (receipt) return receipt;
+        await sleep(1000);
+    }
+
+    throw new Error("Transaction timeout");
+}
+```
+
+### Eventual Consistency ile Yaşamak
+
+Blokzincir node'ları arasında eventual consistency normaldir. Sistem buna göre tasarlanmalı:
+
+- Write işlemleri primary'e
+- Read işlemleri secondary'ye (kendi yazdığını okuma garantisiyle)
+- Critical işlemler için primary'den doğrudan oku
+
+## Disaster Recovery
+
+### Multi-Region Deployment
+
+```
+Region A (Istanbul)
+├── Primary Node
+├── Secondary Node
+└── Application Server
+
+Region B (Frankfurt)
+├── Secondary Node
+└── Application Server (standby)
+
+Region C (Moscow)
+└── Backup Node
+```
+
+### Failover Playbook
+
+```
+1. Primary node health check fail → 3 saniye bekle
+2. Retry 2 kez daha → hala fail
+3. Secondary'yi primary yap → DNS güncelle
+4. Yeni secondary provision et
+5. Backup node'u secondary yap
+6. Alert → operasyon ekibine bildirim
+```
+
+## Monitoring & Alerting
+
+```prometheus
+# Kritik metrikler
+blockchain_node_synced 1
+blockchain_block_delay_seconds 2
+blockchain_peer_count 12
+blockchain_transaction_pool_size 45
+blockchain_error_rate 0.001
+
+# Alert kuralları
+ALERT NodeOutOfSync
+  IF blockchain_node_synced == 0
+  FOR 30s
+  LABELS { severity: "critical" }
+
+ALERT HighBlockDelay
+  IF blockchain_block_delay_seconds > 10
+  FOR 1m
+  LABELS { severity: "warning" }
+```
+
+## Özet
+
+Blokzincir altyapısında asıl zorluk blockchain'in kendisinden değil, onun etrafındaki distributed system katmanındandır. Node yönetimi, veri tutarlılığı, failover ve monitoring — bunlar blockchain altyapısının asıl işidir.

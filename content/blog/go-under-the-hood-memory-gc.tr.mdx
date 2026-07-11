@@ -1,0 +1,266 @@
+---
+title: "Go'nun Derinlikleri: Bellek Yönetimi, GC ve Performans"
+date: "2026-07-20"
+tags: ["go", "performance", "architecture", "backend"]
+excerpt: "Go'nun bellek modeli, garbage collector iç işleyişi, escape analysis ve performans optimizasyon tekniklerine derinlemesine bir bakış — stack vs heap allocasyonundan GC tuning ve pprof profiling'e kadar."
+---
+
+## Giriş: "Varsayılanı Yeterince Hızlı"
+
+Go'nun vaadi sadedir: üretimde sorun çıkarmayan bir dil. Çoğu senaryo için bu doğrudur, ancak bir mimar olarak "varsayılanın yeterli olduğu yer" ile "elle tuning gerektiren yer" arasındaki çizgiyi bilmek zorundasınız. Stack allocasyonu, escape analysis ve concurrent GC çoğu yükü otomatik taşır; fakat yüksek throughput'lu sistemlerde mikrosoniye mertebesindeki GC latency'leri bile kritik hale gelir. Bu yazı, Go'nun bellek yönetimini anlamanızı ve gerektiğinde doğru tuning kararları almanızı sağlayacak.
+
+## Stack vs Heap Allocasyonu
+
+Go derleyicisi her değişkenin nerede yaşayacağına **escape analysis** ile karar verir. Stack ucuzdur: fonksiyon dönüşünde otomatik temizlenir, pointer chasing olmaz, GC dokunmaz. Heap pahalıdır: allocasyon, GC marking ve sweep maliyeti vardır.
+
+### Heap Allocasyonuna Zorlayan Durumlar
+
+- **Pointer escape**: Değişkenin adresi fonksiyon dışına kaçarsa (return veya global)
+- **Closure**: Closure içinde yakalanan değişkenler heap'e kaçar
+- **Interface dönüşümü**: Somut tip → `interface{}` dönüşümü neredeyse her zaman heap allocasyonudur
+- **Defer**: `defer` içinde kullanılan değişkenler heap'e taşınır
+- **Büyük struct'lar**: Stack threshold'u aşan yapılar
+
+```go
+var global *int
+func escape()    { x := 42; global = &x } // heap allocasyonu
+func noEscape() int { x := 42; return x } // stack, değer kopyalanır
+```
+
+### Escape Kararlarını Görme
+
+```bash
+$ go build -gcflags="-m" main.go 2>&1
+./main.go:6: moved to heap: x
+```
+
+`-m -m` (çift) daha detaylı çıktı verir. Bazen derleyici "does not escape" dese de optimizasyon kaynaklı allocasyon olabilir — nihai doğrulama her zaman **benchmark + pprof** iledir.
+
+## Garbage Collector Derinlemesine
+
+Go'nun GC'si **concurrent, tri-color mark-sweep, non-generational, non-compacting**'dir.
+
+### Tri-Color Algoritma
+
+Üç renk: **beyaz** (taranmamış, silinebilir), **gri** (kendisi taranmış, referansları değil), **siyah** (kendisi ve referansları tamamen taranmış). GC köklerden (global'ler, stack'ler) başlar, her şeyi gri yapar, sonra gri seti boşalana kadar tarar. Kalan beyaz objeler garbage'dir.
+
+### GC Cycle Fazları
+
+1. **Mark Setup (STW)**: Write barrier açılır, tüm P'ler GC'ye hazırlanır. ~10-30μs.
+2. **Marking (Concurrent)**: Objeler taranır. CPU'nun ~%25'ini kullanır. Çoğu iş bu fazda biter.
+3. **Mark Termination (STW)**: Kalan iş bitirilir, write barrier kapatılır. ~10-50μs.
+4. **Sweep (Concurrent)**: Bellek geri alınır. Bir sonraki allocasyon tetikleyene kadar ertelenebilir.
+
+### Write Barrier
+
+Concurrent marking sırasında program GC ile eşzamanlı çalışır. Bir goroutine siyah bir objeye beyaz bir objenin pointer'ını yazarsa, GC o beyaz objeyi kaçırabilir. **Dijkstra-style insertion barrier** her pointer write işleminde hedef objeyi gri yaparak bunu önler.
+
+### GC Pacing
+
+```
+trigger = GOGC/100 * (liveHeap + GCFootprint)
+```
+
+Varsayılan GOGC=100: live heap 10 MB ise toplam heap 20 MB'a ulaştığında GC tetiklenir. Program her an ölü heap'in 2 katı kadar fazladan bellek kullanabilir.
+
+## GC Tuning
+
+### GOGC: CPU vs Memory Trade-off
+
+| GOGC | Threshold | GC Frekansı | CPU Overhead |
+|------|-----------|-------------|--------------|
+| 50 | 1.5x live | Sık | Düşük STW, yüksek CPU |
+| 100 | 2x live | Default | Dengeli |
+| 200 | 3x live | Seyrek | Uzun STW, düşük CPU |
+| off | Sonsuz | Hiç | Bellek şişer |
+
+**Kural**: GOGC'yi değiştirmek son çaredir. Önce allocasyonları azaltın.
+
+### GOMEMLIMIT (Go 1.19+)
+
+GOGC yavaş yanıt verir — heap aniden şişerse threshold aşılana kadar GC tetiklenmez. `GOMEMLIMIT` hard limit koyar:
+
+```go
+debug.SetMemoryLimit(500 * 1024 * 1024) // 500 MB
+```
+
+Limit aşılınca GC hemen tetiklenir. Container'da total belleğin ~%80-90'ını vermek iyi pratiktir.
+
+### gctrace ile Monitoring
+
+```bash
+$ GODEBUG=gctrace=1 ./myapp
+gc 1 @0.001s 4%: 0.016+0.54+0.024 ms clock, ...
+   8->8->4 MB, 9 MB goal, 4 P
+```
+
+Format: `gc <loop> @<time> <CPU%>: <Setup+Marking+Term>, <inuse->aftermark->live>, <goal>, <P>`. İzlenecek metrikler: toplam STW süresi, CPU%, heap goal.
+
+### Ne Zaman Tuning Yapmalı?
+
+**Yapmayın**: Latency kritik değilse, GC CPU %1'in altındaysa, allocasyon profiling yapmadıysanız.
+
+**Yapın**: GC latency > 1ms kabul edilemezse, CPU'nun > %10'u GC'ye gidiyorsa, container bellek limitine yaklaşıyorsanız.
+
+## Memory Optimizasyon Teknikleri
+
+### sync.Pool ile Object Reuse
+
+Allocasyon azaltmanın en etkili yolu:
+
+```go
+var pool = sync.Pool{
+    New: func() interface{} { return &Buffer{data: make([]byte, 0, 1024)} },
+}
+func handle() {
+    buf := pool.Get().(*Buffer)
+    buf.Reset()
+    defer pool.Put(buf)
+    // buf'u kullan
+}
+```
+
+Önemli: `sync.Pool` objeleri GC cycle'ları arasında temizlenebilir. Bu bir cache değil, allocasyon amortisman aracıdır.
+
+### Pre-allocation
+
+```go
+// KÖTÜ: her 2x'te allocasyon + copy
+var s []int
+for i := 0; i < 1000; i++ { s = append(s, i) }
+
+// İYİ: sıfır allocasyon
+s := make([]int, 0, 1000)
+for i := 0; i < 1000; i++ { s = append(s, i) }
+```
+
+Aynısı map için: `make(map[string]int, 1000)`.
+
+### Pointer vs Value Receiver
+
+```go
+type Large struct { data [1024]byte }
+func (l Large) Value() {} // 1024 byte kopya her çağrıda
+func (l *Large) Ptr()  {} // 8 byte pointer
+```
+
+Küçük struct'lar (≤4 kelime) için value receiver sorun değil. Büyük struct'lar heap allocasyonu ve kopya maliyeti getirir. Hot path'te profil çekip karar verin.
+
+### Struct Alignment
+
+```go
+// KÖTÜ: 24 byte (padding kaybı)
+type Bad struct { a bool; b int64; c bool }
+// İYİ: 16 byte
+type Good struct { b int64; a bool; c bool }
+```
+
+Field'ları büyükten küçüğe dizmek padding'i azaltır. `unsafe.Sizeof()` ile kontrol edin.
+
+## Profiling ve Benchmarking
+
+### pprof
+
+```go
+import _ "net/http/pprof"
+func main() { go http.ListenAndServe(":6060", nil); /* ... */ }
+```
+
+```bash
+$ go tool pprof -http=:9090 localhost:6060/debug/pprof/profile?seconds=30  # CPU
+$ go tool pprof -http=:9090 localhost:6060/debug/pprof/heap                # Heap
+```
+
+pprof'da **Top** (en çok CPU/heap), **Flame Graph** (call stack), **Source** (satır bazı allocasyon) görünümleri kritiktir.
+
+### go tool trace
+
+```bash
+$ go run main.go 2> trace.out && go tool trace trace.out
+```
+
+Goroutine'lerin GC marking'de nerede bloklandığını, faz sürelerini gösterir.
+
+### Benchmark Best Practices
+
+```go
+func BenchmarkProcess(b *testing.B) {
+    data := generateData(1000)
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ { Process(data) }
+}
+```
+
+```bash
+$ go test -bench=. -benchmem -count=5 | benchstat
+```
+
+Mutlaka: `-benchmem` (alloc/op, bytes/op), `benchstat` (istatistiksel anlamlılık), `-count=5` (gürültü azaltma).
+
+### Alloc Hotspot'ları
+
+```bash
+$ go tool pprof -alloc_objects localhost:6060/debug/pprof/heap  # sayıya göre
+$ go tool pprof -alloc_space  localhost:6060/debug/pprof/heap  # boyuta göre
+```
+
+## Performans Anti-pattern'leri
+
+**String concat**: `+` operatörü her seferinde allocasyon yapar. `strings.Builder` + `Grow()` ile zero alloc'layın.
+
+**fmt.Sprintf vs strconv**: Sprintf reflection kullanır. Hot path'te `strconv.Itoa` + string concat tercih edin.
+
+**Reflection**: `reflect.ValueOf` her çağrıda allocasyon yapar. Type switch ile değiştirin:
+
+```go
+func toString(v interface{}) string {
+    switch t := v.(type) {
+    case string: return t
+    case int: return strconv.Itoa(t)
+    default: return fmt.Sprint(t)
+    }
+}
+```
+
+**interface{} boxing**: Her interface{} ataması heap allocasyonudur. Hot path'lerde **generics** (Go 1.18+) kullanın: `func Process[T any](items []T) T`.
+
+## Case Study: High-Throughput Data Pipeline
+
+Saniyede 500K olay, JSON parse + transform + forward. pprof sonuçları: json.Unmarshal %32, bytes.Buffer.Write %18, string concat %14, reflect %11.
+
+### Çözümler
+
+**sync.Pool ile buffer reuse** — `bytes.Buffer`'ları pool'a alın, `Reset()` ile sıfırlayın. Event objelerini de pool'a alın.
+
+**Sharded mutex** ile contention azaltma:
+
+```go
+type ShardedCounter struct {
+    shards [64]struct { mu sync.Mutex; val int64 }
+}
+func (sc *ShardedCounter) Inc(key uint64) {
+    s := &sc.shards[key%64]; s.mu.Lock(); s.val++; s.mu.Unlock()
+}
+```
+
+### Sonuçlar
+
+| Metric | Önce | Sonra | Kazanç |
+|--------|------|-------|--------|
+| GC CPU overhead | %12 | %2 | %83 azalma |
+| P99 latency | 45ms | 8ms | %82 iyileşme |
+| Alloc/op | 8.2 KB | 0.3 KB | %96 azalma |
+| Throughput | 180K/s | 520K/s | %188 artış |
+
+## Özet
+
+| Katman | Yaklaşım |
+|--------|----------|
+| Escape analysis | `-gcflags="-m"` ile kontrol, closure/interface escape'lerine dikkat |
+| GC tuning | Önce allocasyon azalt, sonra GOGC, en son GOMEMLIMIT |
+| Object reuse | `sync.Pool` hot path'lerde zorunlu |
+| Pre-allocation | `make` ile capacity, `strings.Builder` ile Grow |
+| Profiling | pprof (alloc_objects/alloc_space) + trace + benchstat |
+| Alignment | Struct field sıralaması, padding kontrolü |
+
+Go'nun bellek yönetimi çoğu yükü otomatik taşır. Fakat otomatiğe güvenip profiling'i atlamak, üretimde sürpriz garantisidir. Ölçmeden değiştirmeyin, değiştirmeden ölçmeyin.

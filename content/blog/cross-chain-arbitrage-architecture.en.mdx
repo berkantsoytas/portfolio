@@ -1,0 +1,135 @@
+---
+title: "Cross-Chain Arbitrage Architecture: Steem → SBD → Upbit Pipeline"
+date: "2026-07-18"
+tags: ["distributed-systems", "blockchain", "event-driven", "architecture"]
+excerpt: "The distributed system architecture behind a cross-chain arbitrage pipeline that withdraws SBD from Steem, sells on Upbit, buys STEEM, and transfers it back."
+---
+
+## The Problem
+
+SBD (Steem Blockchain Dollar) is a stablecoin on the Steem blockchain. To increase market supply and maintain price stability, we designed a systematic arbitrage process:
+
+```
+Steem Blockchain → Withdraw SBD → Upbit Exchange → Sell SBD → Buy STEEM → Send Back to Steem
+```
+
+This simple loop requires serious distributed systems infrastructure.
+
+## Architecture
+
+### Event-Driven Pipeline
+
+The entire system is built on an event-driven architecture:
+
+```go
+type PipelineEvent struct {
+    Type      string      `json:"type"`
+    Payload   interface{} `json:"payload"`
+    TraceID   string      `json:"trace_id"`
+    Timestamp time.Time   `json:"timestamp"`
+}
+```
+
+Each stage produces an event consumed by the next:
+
+1. `withdrawal:requested` — SBD withdrawal request from Steem blockchain
+2. `withdrawal:confirmed` — Withdrawal confirmed on-chain
+3. `exchange:order_placed` — Sell order placed on Upbit
+4. `exchange:order_filled` — Order filled, STEEM purchased
+5. `transfer:initiated` — STEEM sent back to Steem blockchain
+
+### State Machine Design
+
+Each arbitrage cycle is managed by a state machine:
+
+```go
+type CycleState int
+
+const (
+    StateIdle CycleState = iota
+    StateWithdrawing
+    StateWaitingConfirmation
+    StateSelling
+    StateBuying
+    StateTransferring
+    StateCompleted
+    StateFailed
+)
+```
+
+Benefits:
+- Automatic rollback or retry on any stage failure
+- Hundreds of cycles run independently in parallel
+- System resumes from saved state after crash
+
+### Concurrency Model
+
+Node.js event loop manages hundreds of concurrent arbitrage cycles:
+
+```typescript
+class ArbitrageEngine {
+    private cycles: Map<string, CycleStateMachine> = new Map();
+    private queue: Queue<ArbitrageTask>;
+
+    async processCycle(task: ArbitrageTask) {
+        const machine = new CycleStateMachine(task);
+        this.cycles.set(task.id, machine);
+
+        while (!machine.isTerminal()) {
+            const action = machine.currentAction();
+            try {
+                const result = await this.executeAction(action);
+                machine.transition(result);
+            } catch (err) {
+                machine.handleError(err);
+                await this.backoff(machine.retryCount);
+            }
+        }
+    }
+}
+```
+
+### Resilience Patterns
+
+**Circuit Breaker**: Opens when Upbit API hits rate limits or downtime:
+
+```typescript
+const upbitBreaker = new CircuitBreaker({
+    threshold: 5,
+    resetTimeout: 30000,
+    onOpen: () => switchToFallbackExchange(),
+});
+```
+
+**Retry with Exponential Backoff**: Blockchain transactions can be delayed:
+
+```typescript
+async function waitForConfirmation(txId: string, maxRetries = 10) {
+    for (let i = 0; i < maxRetries; i++) {
+        const receipt = await steemNode.getTransaction(txId);
+        if (receipt.confirmed) return receipt;
+        await sleep(Math.min(1000 * Math.pow(2, i), 30000));
+    }
+    throw new Error("Transaction confirmation timeout");
+}
+```
+
+### Monitoring & Observability
+
+Each pipeline step collects:
+- **Metrics**: Prometheus — latency, success/failure rates
+- **Tracing**: OpenTelemetry — full trace per cycle
+- **Logging**: Structured JSON, each event tagged with trace_id
+
+```
+arbitrage_cycles_total{status="completed"} 12847
+arbitrage_cycle_duration_seconds{quantile="0.99"} 45.2
+arbitrage_profit_total_usd 32450
+```
+
+## Key Takeaways
+
+1. **Blockchain ops are async and unreliable** — Always verify, always timeout
+2. **Exchange APIs are rate-limited** — Circuit breakers and queuing are mandatory
+3. **State machines are non-negotiable** — Distributed systems require explicit state management
+4. **Monitoring is everything** — Without observability, debugging is impossible

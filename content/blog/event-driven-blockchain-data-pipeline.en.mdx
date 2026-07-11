@@ -1,0 +1,117 @@
+---
+title: "Event-Driven Architectures for Blockchain Data Processing"
+date: "2026-07-16"
+tags: ["distributed-systems", "kafka", "event-driven", "architecture"]
+excerpt: "Designing and implementing a real-time blockchain data processing system using Kafka and event-driven architecture."
+---
+
+## Why Event-Driven?
+
+Blockchain data is inherently event-driven. Every block, every transaction is an event. Using event-driven architecture over traditional polling:
+
+- **Real-time** — Process blocks as they arrive
+- **Scalable** — Independent consumer scaling
+- **Flexible** — Add consumers without affecting existing pipelines
+
+## Architecture
+
+### Kafka Topic Design
+
+```
+raw-blocks          → Raw block data (partitioned by block number)
+parsed-transactions → Parsed transactions
+events              → Processed events (transfers, swaps, etc.)
+alerts              → Anomalies and warnings
+```
+
+### Producer — Block Listener
+
+```typescript
+class BlockListener {
+    private producer: KafkaProducer;
+
+    async listen() {
+        for await (const block of this.steemNode.streamBlocks()) {
+            await this.producer.send({
+                topic: "raw-blocks",
+                key: block.number.toString(),
+                value: JSON.stringify(block),
+            });
+
+            for (const tx of block.transactions) {
+                await this.producer.send({
+                    topic: "parsed-transactions",
+                    key: tx.id,
+                    value: this.parseTransaction(tx),
+                });
+            }
+        }
+    }
+}
+```
+
+### Consumer — Processing Pipeline
+
+```typescript
+class TransactionProcessor {
+    async consume() {
+        const consumer = this.kafka.consumer({ groupId: "tx-processor" });
+        await consumer.subscribe({ topic: "parsed-transactions" });
+
+        await consumer.run({
+            eachMessage: async ({ message }) => {
+                const tx = JSON.parse(message.value!.toString());
+                const events = this.extractEvents(tx);
+
+                for (const event of events) {
+                    await this.producer.send({
+                        topic: "events",
+                        key: event.id,
+                        value: JSON.stringify(event),
+                    });
+                }
+            },
+        });
+    }
+}
+```
+
+### Dead Letter Queue
+
+Unprocessable messages go to DLQ (Dead Letter Queue):
+
+```typescript
+try {
+    await processTransaction(tx);
+} catch (err) {
+    await producer.send({
+        topic: "dead-letter-queue",
+        key: tx.id,
+        value: JSON.stringify({ tx, error: err.message, retryCount }),
+    });
+}
+```
+
+## Partition Strategy
+
+Partitioning by block number guarantees ordered processing:
+
+- Block N always goes to the same partition
+- Consumers process in block order
+- Parallel consumers = partition count
+
+## Performance
+
+| Metric | Value |
+|--------|-------|
+| Max throughput | 50,000 tx/s |
+| P99 latency | 120ms |
+| Consumer group scale | 12 nodes |
+| Daily events processed | 15M+ |
+
+## Key Takeaways
+
+1. **Offset management is critical** — Must resume from last committed offset after crash
+2. **Idempotency is mandatory** — Same message processed twice must produce same result
+3. **Schema evolution** — Use Avro or Protobuf with schema registry
+4. **Monitoring** — Track consumer lag, throughput, error rate continuously

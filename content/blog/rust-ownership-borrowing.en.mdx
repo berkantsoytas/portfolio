@@ -1,0 +1,617 @@
+---
+title: "Rust Ownership and Borrowing: The Mental Model Shift"
+date: "2026-07-22"
+tags: ["rust", "ownership", "architecture", "systems"]
+excerpt: "The single most important concept in Rust — how ownership, borrowing, and lifetimes work together to guarantee memory safety without a garbage collector, and why this changes how you design systems."
+---
+
+## Introduction
+
+Every systems language before Rust forced you to choose between two memory management
+models: manual management (C/C++) or garbage collection (Go, Java, C#, Haskell). The
+first gives you maximum control but is the dominant source of security vulnerabilities
+— use-after-free, double-free, buffer overflows. The second trades runtime overhead
+(pause times, CPU cycles in the GC, memory overhead) for safety.
+
+Rust rejects the dichotomy. Ownership, borrowing, and lifetimes form a static
+discipline enforced entirely at compile time. There is no runtime overhead (no GC, no
+reference counting by default), and the compiler catches every memory error your C++
+colleagues would chase with Valgrind or ASan for weeks.
+
+For the architect coming from Go, Java, or C++: this is the single concept you must
+internalize before you can design Rust systems. It changes how you structure data,
+how you wire components together, and how you reason about correctness. It is not
+optional. It is not a style preference. It is Rust.
+
+## Ownership Rules
+
+### One Owner Per Value
+
+Every value in Rust has exactly one variable that is its **owner**. When the owner
+goes out of scope, the value is dropped (memory freed, file handles closed, etc.).
+
+```rust
+fn owner() {
+    let s = String::from("hello"); // s owns the heap buffer
+    // ...
+} // s goes out of scope → `drop` called → heap freed
+```
+
+No `free()`, no `delete`, no GC. The compiler inserts `drop` calls at the precise
+point where the compiler can prove the value is no longer used. If your C++ Spidey
+sense is tingling about RAII: yes, it's that exact pattern, but compiler-enforced
+and without the loopholes.
+
+### Move Semantics
+
+Assignment and function calls **move** ownership by default. The source becomes
+uninitialized — the compiler rejects any use of it.
+
+```rust
+let a = String::from("hello");
+let b = a;              // ownership moves from a to b
+// println!("{a}");     // ❌ compile error: a is moved
+
+fn take(s: String) {}
+take(b);                // ownership moves into the function
+// println!("{b}");     // ❌ compile error: b is moved
+```
+
+This is the critical difference from C++ copy semantics and Go's reference semantics.
+In C++, `auto b = a` copies the string (unless you `std::move`). In Go, `b := a`
+shares the reference. In Rust, `let b = a` moves — the source is invalidated. The
+compiler *will* reject code that uses a moved value.
+
+### Copy and Clone Traits
+
+If you want copy semantics, you opt in explicitly:
+
+- **`Clone`** — any type can implement it. Copies happen via `.clone()`. Expensive
+  copies are visible at the call site (no hidden memcpy of large allocations).
+
+- **`Copy`** — a subtrait of `Clone`. Types that are trivially copyable (no heap
+  allocation, no destructor logic): integers, booleans, floats, char, and tuples of
+  `Copy` types. Assignment copies the value instead of moving.
+
+```rust
+#[derive(Clone, Copy)]
+struct Point { x: i32, y: i32 }
+
+let p1 = Point { x: 0, y: 0 };
+let p2 = p1;        // copy, not move — both p1 and p2 are valid
+```
+
+**Rule of thumb:** implement `Copy` only for types that would be `memcpy`-safe in C.
+Everything else gets move semantics. This eliminates an entire category of
+defensive copies and makes transfer of ownership explicit in the type system.
+
+### Function Arguments and Return Values
+
+Values move into functions and out of return positions. This is the foundation of
+resource management: a function that opens a file returns ownership of the handle;
+a function that consumes a buffer takes ownership.
+
+```rust
+fn read_file(path: &str) -> Result<String, io::Error> {
+    std::fs::read_to_string(path)  // ownership of the String moves to caller
+}
+
+fn consume(s: String) -> usize {
+    s.len()  // s is dropped here
+}            // caller cannot use s afterward
+```
+
+## Borrowing
+
+Moving ownership into every function call would be unusable — you'd never be able to
+use a value again after passing it to anything. **Borrowing** solves this: a reference
+temporarily accesses a value without taking ownership.
+
+### &T vs &mut T
+
+Two kinds of references:
+
+- **`&T`** (shared reference) — read-only access. You can have any number of `&T`
+  references simultaneously.
+- **`&mut T`** (mutable reference) — exclusive write access. You can have at most
+  one `&mut T`, and no `&T` can exist while it's active.
+
+```rust
+fn read(s: &String) -> usize { s.len() }
+fn write(s: &mut String) { s.push_str(" world"); }
+
+let mut s = String::from("hello");
+read(&s);   // many readers OK
+read(&s);
+write(&mut s); // exclusive writer — no other references active
+```
+
+### The XOR Rule
+
+The compiler enforces: **many readers XOR one writer**. This is the single rule that
+eliminates data races at compile time. Not "be careful with locks," not "document the
+locking discipline." The compiler *rejects* code that violates it.
+
+```rust
+let mut v = vec![1, 2, 3];
+let r = &v[0];       // shared borrow of v
+v.push(4);           // ❌ compile error: cannot push while shared borrow active
+println!("{r}");     // the reference is still live here
+```
+
+`v.push(4)` might reallocate the backing buffer, invalidating `r`. The compiler
+catches this. In C++ this is a use-after-free waiting to happen. In Rust it's a
+compile-time error.
+
+### Non-Lexical Lifetimes (NLL)
+
+Modern Rust (2018 edition onward) uses NLL: a reference's scope is not the entire
+block, but lasts until its *last use*. This makes borrows much more ergonomic than
+the original lexical scoping rules.
+
+```rust
+let mut v = vec![1, 2, 3];
+let r = &v[0];
+println!("{r}");     // last use of r — borrow ends here
+v.push(4);           // ✅ OK: no conflicting borrow active
+```
+
+NLL propagates through control flow. The compiler tracks the actual liveness of each
+borrow and only rejects conflicts during overlapping live ranges.
+
+### Dangling Reference Prevention
+
+The compiler prevents references to memory that has been freed — a class of bug that
+is a weekly occurrence in C/C++ and impossible in safe Rust.
+
+```rust
+fn dangle() -> &String {    // ❌ compile error: missing lifetime specifier
+    let s = String::from("hello");
+    &s                       // s dropped here; reference would dangle
+}                            // borrow checker catches this
+```
+
+## Lifetimes
+
+Lifetimes are the mechanism that makes borrowing safe. Every reference has an implicit
+lifetime — the region of code for which the referenced value is guaranteed to be valid.
+
+### Lifetime Annotations
+
+Lifetime annotations don't *change* lifetimes. They *name* them, letting the compiler
+verify that your code respects them.
+
+```rust
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+```
+
+This says: "given two references that both live for at least `'a`, I return a
+reference that lives for at most `'a`." The concrete lifetime `'a` is the
+intersection of the input lifetimes at the call site.
+
+### Elision Rules
+
+Rust elides lifetimes in function signatures when the pattern is unambiguous.
+You do not need to write lifetimes for the vast majority of functions:
+
+| Pattern | Elided Signature | Desugared |
+|---------|-----------------|-----------|
+| One input ref | `fn len(&self) -> usize` | `fn len<'a>(&'a self) -> usize` |
+| One input ref, one output | `fn name(&self) -> &str` | `fn name<'a>(&'a self) -> &'a str` |
+| `&self` method | `fn get(&self, i: usize) -> &T` | `fn get<'a>(&'a self, i: usize) -> &'a T` |
+
+Elision is not magic. The compiler applies three hard-coded rules. When those rules
+don't cover the pattern, you must write lifetimes explicitly.
+
+### 'static Lifetime
+
+`'static` does *not* mean "lives forever." It means "valid for the entire program
+duration." String literals (`"hello"`), const values, and leaked allocations have
+`'static` lifetime.
+
+```rust
+let s: &'static str = "hello";      // stored in the binary's read-only segment
+```
+
+A `'static` bound on a generic (`T: 'static`) means "no borrowed data shorter than the
+program lifetime." This is common in async runtime spawn bounds and thread spawning:
+the task must not reference stack data that might go out of scope.
+
+### Lifetimes in Structs
+
+When a struct holds references, its lifetime parameter ties the struct's validity to
+the referenced data.
+
+```rust
+struct Config<'a> {
+    name: &'a str,
+    path: &'a Path,
+}
+```
+
+An instance of `Config<'a>` cannot outlive the `name` and `path` it references. This
+propagates through the entire API, making the dependency graph explicit in the type
+system.
+
+### Common Lifetime Patterns
+
+| Pattern | When to Use |
+|---------|------------|
+| Single `'a` on `&self` and output | Returning a reference into self (most common) |
+| Two distinct lifetimes (`'a`, `'b`) | When input references have different scopes |
+| Lifetime bounds (`'a: 'b`) | When one reference must outlive another |
+| `&'a self` and `&'b mut self` | Split borrows of different fields |
+
+## Interior Mutability
+
+The ownership rules so far assume compile-time determinism. Sometimes you need
+runtime-guaranteed mutation behind a shared reference. Enter **interior mutability**.
+
+### Cell and RefCell
+
+- **`Cell<T>`** — for `Copy` types. Provides `get()` and `set()` with zero runtime
+  overhead. No borrow checking — the value is always copied out and in.
+
+- **`RefCell<T>`** — for non-`Copy` types. Moves borrow checking to runtime:
+  `borrow()` and `borrow_mut()` panic (or return `Err` with `try_borrow`) if the
+  XOR rule is violated.
+
+```rust
+use std::cell::RefCell;
+
+struct Stats {
+    data: RefCell<Vec<u64>>,
+}
+
+impl Stats {
+    fn record(&self, value: u64) {
+        self.data.borrow_mut().push(value); // runtime borrow check
+    }
+}
+```
+
+The trade-off: you lose the compile-time guarantee. A runtime panic replaces a
+compile-time error. Use `RefCell` only when you can prove the borrow pattern is
+safe but the compiler can't — typically in single-threaded code with callbacks.
+
+### Mutex and RwLock
+
+For multi-threaded interior mutability, the standard library provides `Mutex<T>`
+and `RwLock<T>`. These are `RefCell` with thread synchronization:
+
+```rust
+use std::sync::Mutex;
+
+struct SharedState {
+    counter: Mutex<u64>,
+}
+
+fn increment(state: &SharedState) {
+    let mut c = state.counter.lock().unwrap(); // blocks until lock acquired
+    *c += 1;
+} // lock released on drop
+```
+
+### When to Reach for Interior Mutability
+
+| Situation | Tool |
+|-----------|------|
+| Single-threaded, Copy type | `Cell<T>` |
+| Single-threaded, non-Copy type | `RefCell<T>` |
+| Multi-threaded, many reads, few writes | `RwLock<T>` |
+| Multi-threaded, balanced or write-heavy | `Mutex<T>` |
+| Atomics (integers, booleans) | `AtomicU64`, `AtomicBool`, etc. |
+
+The default should always be compile-time borrow checking. Reaching for interior
+mutability is a design signal: "I need runtime flexibility because the compiler
+cannot prove my pattern is safe."
+
+## Smart Pointers
+
+Rust's ownership model extends through heap-allocated and shared data via smart
+pointers — wrappers that implement `Deref` and `Drop`.
+
+### Box (Heap Allocation, Single Owner)
+
+`Box<T>` moves a value to the heap while keeping a single owner on the stack.
+Use it for recursive types and trait objects:
+
+```rust
+enum List<T> {
+    Cons(T, Box<List<T>>),  // recursive type needs Box for known size
+    Nil,
+}
+
+let trait_obj: Box<dyn Iterator<Item = u64>> = Box::new(vec![1, 2, 3].into_iter());
+```
+
+### Rc (Reference Counting, Single-Threaded)
+
+`Rc<T>` enables shared ownership within a single thread. Cloning an `Rc` increments
+the reference count; dropping decrements it. When the count reaches zero, the value
+is dropped.
+
+```rust
+use std::rc::Rc;
+
+let shared: Rc<String> = Rc::new("hello".into());
+let a = Rc::clone(&shared);   // refcount = 2
+let b = Rc::clone(&shared);   // refcount = 3
+```
+
+`Rc` has no runtime overhead beyond the refcount increment/decrement — but there
+is no cycle detection. A cycle between `Rc` pointers will leak memory.
+
+### Arc (Atomic Reference Counting, Multi-Threaded)
+
+`Arc<T>` is the thread-safe version. It uses atomic operations for refcount
+manipulation. The cost: slightly more expensive clones than `Rc`.
+
+```rust
+use std::sync::Arc;
+use std::thread;
+
+let data: Arc<Vec<u64>> = Arc::new(vec![1, 2, 3]);
+let mut handles = vec![];
+
+for _ in 0..4 {
+    let d = Arc::clone(&data);
+    handles.push(thread::spawn(move || {
+        println!("{}", d.len());
+    }));
+}
+```
+
+### Rc\<RefCell\> and Arc\<Mutex\>
+
+The classic Rust composability pattern: combine a smart pointer with interior
+mutability for shared mutable state.
+
+```rust
+use std::rc::Rc;
+use std::cell::RefCell;
+
+type SharedNode<T> = Rc<RefCell<Node<T>>>;
+
+struct Node<T> {
+    value: T,
+    next: Option<SharedNode<T>>,
+    prev: Option<SharedNode<T>>,
+}
+```
+
+In multi-threaded contexts: `Arc<Mutex<T>>` or `Arc<RwLock<T>>`.
+
+## Common Patterns
+
+### Builder Pattern with Ownership Chain
+
+The builder pattern in Rust uses ownership transfer through method calls, consuming
+and returning self at each step:
+
+```rust
+struct RequestBuilder {
+    url: Option<String>,
+    method: String,
+    body: Option<Vec<u8>>,
+}
+
+impl RequestBuilder {
+    fn new() -> Self {
+        Self { url: None, method: "GET".into(), body: None }
+    }
+    fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+    fn method(mut self, method: impl Into<String>) -> Self {
+        self.method = method.into();
+        self
+    }
+    fn build(self) -> Result<Request, &'static str> {
+        Ok(Request {
+            url: self.url.ok_or("url required")?,
+            method: self.method,
+            body: self.body,
+        })
+    }
+}
+```
+
+The chain `RequestBuilder::new().url("...").method("POST").build()` moves ownership
+through each call, ensuring no partial state is observable.
+
+### Type-State Pattern (State Machine Encoding)
+
+Encode the legal state transitions in the type system. The compiler rejects illegal
+transitions at compile time.
+
+```rust
+struct Closed;
+struct Open;
+
+struct Connection<S> {
+    fd: i32,
+    _state: std::marker::PhantomData<S>,
+}
+
+impl Connection<Closed> {
+    fn open(self) -> Result<Connection<Open>, Error> {
+        // open the fd
+        Ok(Connection { fd: self.fd, _state: std::marker::PhantomData })
+    }
+}
+
+impl Connection<Open> {
+    fn read(&self, buf: &mut [u8]) -> Result<usize, Error> {
+        // read from fd
+    }
+    fn close(self) -> Connection<Closed> {
+        // close fd
+        Connection { fd: self.fd, _state: std::marker::PhantomData }
+    }
+}
+```
+
+Calling `read()` on a `Connection<Closed>` is a compile-time error. The state
+machine is encoded in the types — zero runtime cost.
+
+### Arena Allocation for Cyclic References
+
+When you need cycles (graph structures), use an arena: a single owner of all nodes
+accessed by index (typed ID) instead of references.
+
+```rust
+struct Arena<T> {
+    items: Vec<T>,
+}
+
+impl<T> Arena<T> {
+    fn insert(&mut self, item: T) -> usize {
+        let idx = self.items.len();
+        self.items.push(item);
+        idx
+    }
+    fn get(&self, idx: usize) -> &T { &self.items[idx] }
+    fn get_mut(&mut self, idx: usize) -> &mut T { &mut self.items[idx] }
+}
+```
+
+No lifetime parameters. No reference cycles. The arena owns everything; nodes
+reference each other by index.
+
+### Typed ID Pattern (Avoiding Lifetimes Entirely)
+
+If lifetime parameters proliferate through your data structures, consider replacing
+references with typed IDs:
+
+```rust
+#[derive(Clone, Copy)]
+struct UserId(u64);
+
+struct User {
+    id: UserId,
+    name: String,
+}
+
+struct Team {
+    members: Vec<UserId>,  // references by ID, not by &User
+}
+```
+
+This pattern erases lifetime relationships entirely. The cost: IDs must be resolved
+at runtime, and the ID can dangle. The benefit: no lifetime complexity, straightforward
+mutation, and trivially serializable structures. For many applications — games, ECS
+architectures, document databases — this is the pragmatic choice.
+
+## Pitfalls and How to Fix Them
+
+### Self-Referential Structs (Why Pin Exists)
+
+A struct that holds a pointer into itself cannot be expressed with standard borrows —
+moving the struct would invalidate the pointer. The canonical case is a future that
+references its own stack.
+
+```rust
+// ❌ This does not compile
+struct SelfReferential {
+    data: String,
+    ptr: &'??? str,  // what lifetime? it points into self.data
+}
+```
+
+The solution is `Pin<Box<T>>` or `Pin<&mut T>`, which guarantees the value will
+not move after being pinned. The standard library uses this extensively for async
+futures. As an architect: recognize that self-referential types are the *one* case
+where Rust's ownership model needs escape hatch APIs. Avoid them in application code;
+reach for arena or typed ID patterns instead.
+
+### Lifetime Over-Annotation
+
+New Rustaceans annotate every lifetime explicitly. Don't. Let elision handle the
+common cases. Add lifetime annotations only when:
+
+1. Multiple input references with different lifetimes
+2. A reference in a struct definition
+3. The elision rules produce the wrong output lifetime
+
+When you *do* write lifetimes, keep them as short as possible. If a parameter doesn't
+appear in the return type, don't give it a name — use `'_` or let it be elided.
+
+```rust
+// Over-annotated (noisy)
+fn first<'a, 'b>(x: &'a str, y: &'b str) -> &'a str { x }
+
+// Idiomatic — elision handles this
+fn first<'a>(x: &'a str, y: &str) -> &'a str { x }
+```
+
+### Closures Capturing References
+
+Closures capture their environment by reference or by value depending on usage.
+This can lead to surprising borrow conflicts:
+
+```rust
+let mut items = vec![1, 2, 3];
+let mut closure = || {
+    items.push(4);  // captures &mut items
+};
+closure();
+println!("{:?}", items); // ✅ OK — closure borrow ends after last use
+```
+
+If the closure outlives its captures (e.g., passed to a thread or stored in a struct),
+you get a lifetime error. Fixes: move captures explicitly (`move ||`), clone, or use
+`Arc` for shared ownership.
+
+### NLL Limitations in Nested Borrows
+
+NLL handles sequential borrows well but can still struggle with nested borrows
+through methods:
+
+```rust
+struct Container {
+    items: Vec<String>,
+}
+
+impl Container {
+    fn get(&mut self) -> &mut String { &mut self.items[0] }
+    fn push(&mut self, s: String) { self.items.push(s); }
+}
+
+fn trouble(c: &mut Container) {
+    let first = c.get();      // borrows c mutably
+    c.push("x".into());       // ❌ still borrowed by first
+    println!("{first}");
+}
+```
+
+The fix: restructure to avoid simultaneous mutable borrows. Options:
+- Split the struct into sub-fields so borrows don't conflict
+- Use a typed ID pattern to avoid holding the reference
+- Use `RefCell` for runtime borrow checking (acknowledging the loss of compile-time
+  guarantee)
+
+## Summary
+
+| Concept | Mental Model |
+|---------|-------------|
+| Ownership | Every value has exactly one owner; owner goes out of scope → value is dropped |
+| Move semantics | Assignment and function calls transfer ownership; source is invalidated |
+| Borrowing | `&T` (many readers) XOR `&mut T` (one writer) — enforced at compile time |
+| NLL | Borrows last until their final use, not until the end of the block |
+| Lifetimes | Compiler-verified regions where a reference is valid; mostly elided |
+| Interior mutability | `Cell`, `RefCell`, `Mutex` — move borrow checking to runtime when needed |
+| Smart pointers | `Box` (heap), `Rc`/`Arc` (shared ownership), compose with interior mutability |
+
+Rust's ownership model is not a set of restrictions to fight against. It is a
+disciplined approach to resource management that makes entire categories of bugs
+unrepresentable. The learning curve is real — expect your first two weeks to feel
+like fighting the borrow checker. After that, the compiler stops being an adversary
+and becomes a colleague who catches your mistakes before they reach production.
+
+The mental model shift is worth it. No garbage collector. No segfaults. No data
+races. Just you, the compiler, and the most expressive type system in systems
+programming.

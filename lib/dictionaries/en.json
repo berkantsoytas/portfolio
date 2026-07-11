@@ -1,0 +1,52 @@
+{
+  "nav.home": "Home",
+  "nav.portfolio": "CV",
+  "nav.blog": "Blog",
+  "nav.notes": "Notes",
+
+  "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
+  "hero.title": "Hi, I'm Berkant Soytaş",
+  "hero.subtitle": "Software Architect",
+  "hero.description": "Designing blockchain infrastructure, distributed systems, and high-performance backend architectures. Building scalable systems with Go, Node.js, Rust, and Solidity.",
+  "hero.cta": "View CV",
+  "hero.secondary": "Go to Blog",
+
+  "home.recent_posts": "Recent Blog Posts",
+  "home.recent_notes": "Note Tree",
+  "home.view_all": "View All",
+
+  "portfolio.title": "CV",
+  "portfolio.subtitle": "cat /etc/berkant",
+  "portfolio.experience": "Experience",
+  "portfolio.education": "Education",
+  "portfolio.skills": "Skills",
+  "portfolio.projects": "Projects",
+  "portfolio.view_project": "View Project",
+  "portfolio.source_code": "Source Code",
+  "portfolio.contact": "Contact",
+  "portfolio.email": "mailtoberkant@gmail.com",
+  "portfolio.languages": "Languages",
+  "portfolio.lang_tr": "Turkish (Native)",
+  "portfolio.lang_en": "English (Read/Write: fluent, Speaking: 404)",
+
+  "blog.title": "Blog",
+  "blog.subtitle": "grep -r 'thoughts' /blog",
+  "blog.read_more": "Read More →",
+  "blog.min_read": "min read",
+  "blog.no_posts": "No blog posts yet.",
+  "blog.back": "← Back to Blog",
+  "blog.tags": "Tags",
+
+  "notes.title": "Notes",
+  "notes.subtitle": "find /notes -type f",
+  "notes.graph_view": "Graph",
+  "notes.tree_view": "Tree",
+  "notes.note": "Note",
+  "notes.no_notes": "No notes yet.",
+  "notes.select": "Select a note from the tree",
+  "notes.related": "Related Notes",
+
+  "footer.tagline": "build by: Next.js 16 / Tailwind v4",
+  "footer.source": "Source Code",
+  "footer.copyright": "All rights reserved."
+}

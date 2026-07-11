@@ -1,0 +1,32 @@
+---
+title: "Git Branch Stratejileri"
+---
+
+## Git Flow
+
+- `main` — production
+- `develop` — geliştirme
+- `feature/*` — yeni özellik
+- `release/*` — sürüm hazırlığı
+- `hotfix/*` — acil düzeltme
+
+## Trunk-Based Development
+
+- Tek ana branch (`main`)
+- Kısa ömürlü feature branch'ler
+- Sık ve küçük commit'ler
+- Feature flag'ler ile yönetim
+
+## Rebasing
+
+```bash
+git rebase main
+# linear history için merge yerine rebase tercih edilir
+```
+
+## Squash
+
+```bash
+git rebase -i HEAD~3
+# küçük commit'leri birleştirmek için
+```

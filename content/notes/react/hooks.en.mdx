@@ -1,0 +1,41 @@
+---
+title: "React Hooks Reference"
+---
+
+## useState
+
+```tsx
+const [state, setState] = useState<Type>(initialValue);
+```
+
+- State updates are async
+- Functional update: `setState(prev => prev + 1)`
+
+## useEffect
+
+```tsx
+useEffect(() => {
+  // side effect
+  return () => cleanup;
+}, [dependencies]);
+```
+
+- `[]` — mount/unmount only
+- `[dep]` — runs when dep changes
+- No array — runs on every render
+
+## useCallback vs useMemo
+
+| Hook | Returns | Use |
+|------|---------|-----|
+| `useCallback` | function | Preserve function reference |
+| `useMemo` | value | Cache expensive computations |
+
+## useRef
+
+```tsx
+const ref = useRef<HTMLDivElement>(null);
+// ref.current -> DOM element
+```
+
+Can also hold mutable values (doesn't trigger rerender).

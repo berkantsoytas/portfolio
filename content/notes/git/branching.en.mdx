@@ -1,0 +1,32 @@
+---
+title: "Git Branching Strategies"
+---
+
+## Git Flow
+
+- `main` — production
+- `develop` — development
+- `feature/*` — new features
+- `release/*` — release prep
+- `hotfix/*` — urgent fixes
+
+## Trunk-Based Development
+
+- Single main branch
+- Short-lived feature branches
+- Frequent small commits
+- Feature flag management
+
+## Rebasing
+
+```bash
+git rebase main
+# prefer rebase over merge for linear history
+```
+
+## Squash
+
+```bash
+git rebase -i HEAD~3
+# combine small commits into one
+```

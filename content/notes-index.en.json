@@ -1,0 +1,28 @@
+[
+  {
+    "name": "React",
+    "slug": "react",
+    "type": "folder",
+    "children": [
+      { "name": "hooks", "slug": "hooks", "type": "file" },
+      { "name": "context-api", "slug": "context-api", "type": "file" }
+    ]
+  },
+  {
+    "name": "Git",
+    "slug": "git",
+    "type": "folder",
+    "children": [
+      { "name": "basics", "slug": "basics", "type": "file" },
+      { "name": "branching", "slug": "branching", "type": "file" }
+    ]
+  },
+  {
+    "name": "TypeScript",
+    "slug": "typescript",
+    "type": "folder",
+    "children": [
+      { "name": "utility-types", "slug": "utility-types", "type": "file" }
+    ]
+  }
+]

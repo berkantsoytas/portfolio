@@ -1,0 +1,41 @@
+---
+title: "React Hooks Referansı"
+---
+
+## useState
+
+```tsx
+const [state, setState] = useState<Type>(initialValue);
+```
+
+- State güncellemeleri asenkron çalışır
+- Fonksiyonel update: `setState(prev => prev + 1)`
+
+## useEffect
+
+```tsx
+useEffect(() => {
+  // side effect
+  return () => cleanup;
+}, [dependencies]);
+```
+
+- `[]` — sadece mount/unmount
+- `[dep]` — dep değişince çalışır
+- Hiç vermezsen — her render'da çalışır
+
+## useCallback vs useMemo
+
+| Hook | Dönen | Kullanım |
+|------|-------|----------|
+| `useCallback` | function | Fonksiyon referansını korumak için |
+| `useMemo` | value | Pahalı hesaplamaları önbelleğe almak için |
+
+## useRef
+
+```tsx
+const ref = useRef<HTMLDivElement>(null);
+// ref.current -> DOM element
+```
+
+Mutable değerler için de kullanılabilir (rerender tetiklemez).

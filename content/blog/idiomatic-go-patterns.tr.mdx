@@ -1,0 +1,245 @@
+---
+title: "Idiomatic Go: Hata Yönetimi, Interface'ler ve Üretim Desenleri"
+date: "2026-07-21"
+tags: ["go", "architecture", "backend", "patterns"]
+excerpt: "Go'yu Go gibi yazmak — hata yönetimi felsefesinden interface tasarımına, graceful shutdown'dan middleware pattern'lerine ve test stratejilerine kadar."
+---
+
+## Giriş: Go Felsefesi
+
+Go'nun tasarımı üç kelimeye indirgenebilir: **simplicity, readability, composition.** 25 anahtar kelime, minimal syntax, özel DSL yok. Kazanç: ekip içi okunabilirlik. Go, inheritance yerine composition'ı, hiyerarşi yerine interface'leri, framework yerine standard library'yi seçer.
+
+## Error Handling: errors are values
+
+Temel felsefe: **hatalar değerdir**, exception değil. `if err != nil` bir desen değil, zorunluluktur.
+
+### Sentinel, Error Type, Opaque
+
+| Strateji | Örnek | Muayene |
+|---|---|---|
+| Sentinel | `io.EOF`, `sql.ErrNoRows` | `errors.Is` |
+| Error type | `NotFoundError` | `errors.As` |
+| Opaque | Sadece başarı/başarısız | `err != nil` |
+
+Sentinel'ler public API'nin parçasıdır — kararlı durumlar için saklayın. Opaque errors en modüler yapıyı sağlar; çağıran hata detayını bilmez.
+
+### errors.Is, errors.As ve Wrapping
+
+```go
+if errors.Is(err, io.EOF) { /* dosya sonu */ }
+var nf *NotFoundError
+if errors.As(err, &nf) { /* entity bulunamadı */ }
+```
+
+`fmt.Errorf("dosya açılamadı: %w", err)` ile her katman bağlam ekler. Unwrap zinciri sayesinde çağıran tüm katmanları görebilir.
+
+### panic ve recover
+
+`panic` sadece **imkansız durumlar** içindir — programlama hatası, invariant ihlali. `recover` yalnızca cleanup amaçlıdır, control flow için kullanılmaz. Bir goroutine'de panic tüm programı çökertir.
+
+## Interface Tasarımı
+
+Go interface'leri örtük (implicit) implemente edilir. Bu, interface'leri **tüketicinin tanımlamasını** mümkün kılar.
+
+**Accept interfaces, return structs** — parametre olarak interface al, somut tip döndür. Dönüş tipi somut olur, çağıranın ekstra metotlara erişimi kalır.
+
+**Küçük interface'ler** — `io.Reader` (1 metod), `io.Writer` (1 metod). Büyük interface'ler bağımlılığı katılaştırır. Kullanım senaryolarına bölün:
+
+```go
+type UserReader interface { Get(ctx, id) (*User, error) }
+type UserWriter interface { Create(ctx, *User) error }
+```
+
+Interface, onu **kullanan** pakette tanımlanır, üreten değil. Bu sayede producer'ın interface'e bağımlılığı olmaz, testler kolaylaşır.
+
+`any` (Go 1.18+) her şeyi kabul eder — JSON unmarshal, log parametreleri dışında kaçının. Type assertion ile opsiyonel davranış yoklayın:
+
+```go
+switch v := v.(type) {
+case string:  fmt.Println("string:", v)
+case int:     fmt.Println("int:", v)
+}
+```
+
+## Struct ve Composition Pattern'leri
+
+Go'da inheritance yoktur. Embedded struct'lar syntactic sugar sağlar:
+
+```go
+type Server struct {
+    Logger               // metotlar yükseltilir
+    http.Handler         // embedded interface
+    pool    *sql.DB      // named field
+}
+```
+
+Functional options pattern, geriye uyumlu ve okunabilir API sağlar:
+
+```go
+type Option func(*Server)
+func WithTimeout(d time.Duration) Option {
+    return func(s *Server) { s.timeout = d }
+}
+func NewServer(addr string, opts ...Option) *Server {
+    s := &Server{addr: addr, timeout: 30 * time.Second}
+    for _, opt := range opts { opt(s) }
+    return s
+}
+```
+
+Builder pattern ise validation ve bağımlı alanlar için tercih edilir.
+
+## HTTP Server Pattern'leri
+
+### Middleware Chaining
+
+`http.Handler` interface'i ve `http.HandlerFunc` tipi ile middleware'ler bir Handler alıp Handler döndürür:
+
+```go
+func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            logger.Info("request", "method", r.Method, "path", r.URL.Path)
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+### Context Propagation ve Graceful Shutdown
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+srv := &http.Server{Addr: ":8080", Handler: mux}
+go srv.ListenAndServe()
+<-ctx.Done()
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+srv.Shutdown(shutdownCtx)
+```
+
+Graceful shutdown olmadan deployment'larda bağlantı kopmaları yaşarsınız. Context ile cancellation, timeout ve kullanıcı kimliği zincirde taşınır.
+
+### httptest
+
+```go
+handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+})
+srv := httptest.NewServer(handler)
+defer srv.Close()
+resp, _ := http.Get(srv.URL + "/health")
+assert.Equal(t, http.StatusOK, resp.StatusCode)
+```
+
+## Concurrency Coordination
+
+### errgroup (x/sync)
+
+Goroutine grubunun ilk hatada durması, context cancellation ve sınırlı parallelism:
+
+```go
+g, ctx := errgroup.WithContext(context.Background())
+g.SetLimit(10)
+for _, item := range items {
+    item := item
+    g.Go(func() error {
+        select {
+        case <-ctx.Done(): return ctx.Err()
+        default: return process(item)
+        }
+    })
+}
+if err := g.Wait(); err != nil { /* ilk hata */ }
+```
+
+Limitsiz goroutine kaynak tüketimine yol açar — her zaman `SetLimit` koyun.
+
+### Once.Do ve Pool
+
+```go
+var db *sql.DB
+var once sync.Once
+once.Do(func() { db = connect() })
+```
+
+`sync.Pool` ile geçici nesne havuzu GC yükünü azaltır — aynı tip ve kısa ömürlü nesneler için idealdir.
+
+## Testing İdiomları
+
+### Table-Driven Tests
+
+```go
+tests := []struct {
+    name   string
+    input  string
+    want   time.Duration
+    wantOK bool
+}{
+    {name: "saniye", input: "30s", want: 30 * time.Second, wantOK: true},
+    {name: "geçersiz", input: "xyz", want: 0, wantOK: false},
+}
+for _, tc := range tests {
+    t.Run(tc.name, func(t *testing.T) {
+        got, err := ParseDuration(tc.input)
+        if tc.wantOK { assert.NoError(t, err); assert.Equal(t, tc.want, got) }
+        else { assert.Error(t, err) }
+    })
+}
+```
+
+Subtests ile biri kırıldığında diğerleri çalışmaya devam eder. `-run` flag'i ile spesifik test seçilir.
+
+### Golden Files ve Build Tags
+
+Golden files snapshot test sağlar — `testdata/*.golden` içinde beklenen çıktı tutulur, `-update` flag'i ile yeniden yazılır. Build tag'ler (`//go:build integration`) ile integration test'leri ayrıştırın.
+
+## Production Readiness
+
+### Structured Logging (log/slog)
+
+```go
+slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,
+})))
+slog.Info("sunucu başlatıldı", "addr", ":8080", "env", "production")
+slog.Error("bağlantı hatası", "err", err)
+```
+
+Go 1.21+ ile gelen slog, JSON formatında leveled logging sağlar. Production'da `fmt.Println` yoktur. Slog çıktısı Loki, Datadog, CloudWatch ile uyumludur.
+
+### Konfigürasyon
+
+```go
+type Config struct {
+    Port    string `env:"PORT,default=8080"`
+    DB      string `env:"DATABASE_URL,required"`
+}
+// github.com/caarlos0/env ile Parse
+```
+
+Environment variable'lar 12-factor app standardıdır. Struct'ta toplamak test edilebilirliği artırır.
+
+### fmt vs slog
+
+| Amaç | Kullan |
+|---|---|
+| CLI çıktısı | `fmt.Println` |
+| Production log | `log/slog` |
+| Development debug | `fmt.Printf` |
+| Hata raporlama | `slog.Error` + bağlam |
+
+## Özet
+
+| Alan | İlke |
+|---|---|
+| Hata yönetimi | Değer olarak hata, wrap + Is/As, panikten kaçın |
+| Interface | Küçük tanımla, tüketicide tut, `any` son çare |
+| Composition | Embed + functional options, inheritance yok |
+| HTTP | Middleware chain, context, graceful shutdown |
+| Concurrency | errgroup + SetLimit, Once.Do, Pool |
+| Test | Table-driven, golden files, build tags |
+| Production | slog, env config |
+
+İdiyomatik Go yazmak, dili kısıtlamalarıyla kabul etmekle başlar. Exception yok — hataları işleyin. Inheritance yok — compose edin. Framework yok — standard library yeter. Go'yu Go gibi yazın: basit, okunabilir, birleştirilebilir.

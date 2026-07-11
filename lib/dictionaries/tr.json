@@ -1,0 +1,52 @@
+{
+  "nav.home": "Ana Sayfa",
+  "nav.portfolio": "CV",
+  "nav.blog": "Blog",
+  "nav.notes": "Notlar",
+
+  "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
+  "hero.title": "Merhaba, ben Berkant Soytaş",
+  "hero.subtitle": "Yazılım Mimarı",
+  "hero.description": "Blokzincir altyapısı, dağıtık sistemler ve yüksek performanslı backend mimarileri tasarlıyorum. Go, Node.js, Rust ve Solidity ile ölçeklenebilir sistemler inşa ediyorum.",
+  "hero.cta": "CV'yi Görüntüle",
+  "hero.secondary": "Blog'a Git",
+
+  "home.recent_posts": "Son Blog Yazıları",
+  "home.recent_notes": "Not Ağacı",
+  "home.view_all": "Tümünü Gör",
+
+  "portfolio.title": "CV",
+  "portfolio.subtitle": "cat /etc/berkant",
+  "portfolio.experience": "Deneyim",
+  "portfolio.education": "Eğitim",
+  "portfolio.skills": "Yetenekler",
+  "portfolio.projects": "Projeler",
+  "portfolio.view_project": "Projeyi İncele",
+  "portfolio.source_code": "Kaynak Kod",
+  "portfolio.contact": "İletişim",
+  "portfolio.email": "mailtoberkant@gmail.com",
+  "portfolio.languages": "Diller",
+  "portfolio.lang_tr": "Türkçe (Ana dil)",
+  "portfolio.lang_en": "İngilizce (Okuma/Yazma: akıcı, Konuşma: 404)",
+
+  "blog.title": "Blog",
+  "blog.subtitle": "grep -r 'thoughts' /blog",
+  "blog.read_more": "Devamını Oku →",
+  "blog.min_read": "dk okuma",
+  "blog.no_posts": "Henüz blog yazısı yok.",
+  "blog.back": "← Blog'a Dön",
+  "blog.tags": "Etiketler",
+
+  "notes.title": "Notlar",
+  "notes.subtitle": "find /notes -type f",
+  "notes.graph_view": "Grafik",
+  "notes.tree_view": "Ağaç",
+  "notes.note": "Not",
+  "notes.no_notes": "Henüz not yok.",
+  "notes.select": "Soldaki ağaçtan bir not seç",
+  "notes.related": "İlişkili Notlar",
+
+  "footer.tagline": "Next.js 16 / Tailwind v4 ile yapıldı.",
+  "footer.source": "Kaynak Kod",
+  "footer.copyright": "Tüm hakları saklıdır."
+}

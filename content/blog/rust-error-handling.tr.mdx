@@ -1,0 +1,664 @@
+---
+title: "Rust'ta Hata Yönetimi: panic'ten Üretim Koduna"
+date: "2026-07-23"
+tags: ["rust", "error-handling", "architecture", "systems"]
+excerpt: "Rust'ın hata yönetimi felsefesi — Result'un sadece 'hata yönetimi' değil, bir tip sistemi özelliği olduğu ve küçük crate'lerden büyük ölçekli sistemlere hata stratejileri."
+---
+
+## Giriş — Hatalar Değer Olarak
+
+Rust'ın hata yönetimi felsefesi tek bir cümleye sığar: **hatalar değerdir, exception değil.** Bu ayrım dilin temelindeki ownership ve type system ile doğrudan bağlantılıdır. `try/catch` mekanizması yoktur çünkü hatalar, normal akışın bir parçası olarak tip sistemi içinde modellenir.
+
+Exception tabanlı dillerde hata, call stack'te yukarı fırlayan kontrol dışı bir olaydır. Rust'ta hata, fonksiyon imzasının bir parçasıdır — `Result<T, E>` dönen bir fonksiyon, çağırana "başarısız olabilirim" garantisini derleme zamanında verir.
+
+```
+┌──────────────────────────────┬──────────────────────────────────┐
+│ Exception (Java/C#/Python)   │ Result (Rust)                   │
+├──────────────────────────────┼──────────────────────────────────┤
+│ Çağıranın bilmediği bir yol  │ Fonksiyon imzasında belirtilir   │
+│ Runtime'da yukarı fırlar     │ Derleme zamanında kontrol edilir │
+│ Unchecked olabilir           │ checked exception, must-handle   │
+│ finally/using ile cleanup    │ Drop + RAII, cleanup otomatik    │
+└──────────────────────────────┴──────────────────────────────────┘
+```
+
+Bu yaklaşımın en büyük avantajı: **bir fonksiyonun başarısız olabileceği, çağıran için görünür bir sözleşmedir.** `Result<T, E>` gören bir geliştirici, bu çağrının her iki durumunu da ele almak zorundadır — compiler buna izin vermez.
+
+## panic vs Result vs Option
+
+Rust üç farklı "ters giden şey" kategorisi sunar. Hangisini ne zaman kullanacağınızı bilmek, Rust'ta olgunluk göstergesidir.
+
+### panic: Kurtarılamaz Durumlar
+
+`panic!` bir programcı hatasıdır. Index out of bounds, unwrap failed, assertion failed — bunlar kurtarılamaz çünkü programın varsayımları çökmüştür.
+
+```rust
+// KÖTÜ: panic kurtarılabilir bir hatayı temsil ediyor
+fn divide(a: f64, b: f64) -> f64 {
+    if b == 0.0 {
+        panic!("division by zero");
+    }
+    a / b
+}
+
+// İYİ: panic sadece programcı hatası olduğunda
+fn get_unchecked(slice: &[u32], idx: usize) -> u32 {
+    assert!(idx < slice.len(), "index out of bounds: {} >= {}", idx, slice.len());
+    unsafe { *slice.get_unchecked(idx) }
+}
+```
+
+panic'in geçerli olduğu yerler:
+
+- **Kritik invariants**: `unreachable!()`, `unimplemented!()`
+- **Testler**: `unwrap()` testlerde kullanılabilir çünkü test hatası = test failure
+- **Demo/prototype kod**: Production'a gitmez
+- **FFI boundary'de UB öncesi hızlı durma**
+
+### Option: Yokluk Hata Değildir
+
+`Option<T>` bir değerin olabileceği veya olmayabileceği durumları temsil eder. Yokluk (`None`) bir hata değil, geçerli bir durumdur.
+
+```rust
+// Option — hata değil, eksik veri
+fn find_user(id: u64) -> Option<User> { /* ... */ }
+
+// Result — hata olabilir
+fn fetch_user(id: u64) -> Result<User, FetchError> { /* ... */ }
+```
+
+Aradaki fark: `None` normal akışın bir parçasıdır, `Err(e)` ise istenmeyen bir durumu temsil eder. HashMap'ten key bulamadığınızda `None` dönersiniz, dosya okuma hatasında `Err` dönersiniz.
+
+### Result: Kurtarılabilir Hatalar
+
+`Result<T, E>` iki varyantlı bir enum'dur: başarı (`Ok(T)`) veya başarısızlık (`Err(E)`). Hata yönetiminin ana yapı taşı budur.
+
+```rust
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+`Result` ile çalışırken üç yaklaşım vardır:
+
+| Yaklaşım | Kullanım | Ne zaman |
+|----------|----------|----------|
+| `unwrap()` / `expect()` | Hızlı erişim | Debug, test, prototype |
+| `match` / `if let` | Tam kontrol | Her durumu ele almanız gerektiğinde |
+| `?` | Propagasyon | Hata yukarı fırlatılacaksa |
+
+### unwrap/expect — Debug Aracı, Production Pattern'i Değil
+
+`unwrap()` ve `expect()` bir `Result` veya `Option`'ın başarılı olacağına dair bir assertion'dur. Başarısız olursa panic atar.
+
+```rust
+// SADECE prototype veya test
+let data = std::fs::read_to_string("config.toml").unwrap();
+```
+
+Production kodunda `unwrap()` ve `expect()` kırmızı bayraktır. Bir fonksiyon `Result` dönüyorsa, onu ya ele alın (`match`) ya da yukarı taşıyın (`?`).
+
+## `?` Operatörü
+
+`?` operatörü Rust 1.0'dan sonra eklenen en önemli dil özelliklerinden biridir. Hata propagasyonunu sıfır boilerplate'e indirir.
+
+### Nasıl Çalışır
+
+`?` bir `Result` veya `Option` üzerinde çağrılır:
+
+- `Ok(T)` ise değeri unwrap'lar ve döndürür
+- `Err(E)` ise fonksiyondan erken dönüş yapar, hatayı yukarı iletir
+
+```rust
+use std::fs;
+use std::io;
+
+fn read_config() -> Result<String, io::Error> {
+    let path = fs::canonicalize("config.toml")?;  // Err ise erken dönüş
+    let content = fs::read_to_string(path)?;       // aynı
+    Ok(content)
+}
+```
+
+Bu kod `?` olmadan en az iki `match` bloğu gerektirirdi.
+
+### From Trait Dönüşümü
+
+`?` operatörünün kritik özelliği: **otomatik tür dönüşümü yapar.** `From<E>` trait'i implemente edilmişse, `?` hatayı otomatik olarak hedef türe çevirir.
+
+```rust
+fn read_config() -> Result<String, AppError> {
+    // io::Error otomatik olarak AppError'e dönüşür
+    let content = std::fs::read_to_string("config.toml")?;
+    Ok(content)
+}
+```
+
+Bu sayede farklı hata tiplerini tek bir error type'da birleştirebilirsiniz. `From` implementasyonu `?`'e "nasıl çevireceğini" söyler.
+
+### main ve Test Fonksiyonlarında `?`
+
+Rust 1.26 ile birlikte `main` ve test fonksiyonları `Result` dönebilir:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string("config.toml")?;
+    println!("{}", content);
+    Ok(())
+}
+```
+
+Bu, `main` içinde de `?` kullanımına izin verir. Binary projelerde `anyhow::Result` yaygın bir tercihtir:
+
+```rust
+fn main() -> anyhow::Result<()> {
+    let content = std::fs::read_to_string("config.toml")?;
+    println!("{}", content);
+    Ok(())
+}
+```
+
+### `?` ile Option
+
+`?` operatörü `Option` üzerinde de çalışır:
+
+```rust
+fn first_even(nums: &[i32]) -> Option<i32> {
+    let first = nums.first()?;       // None ise return None
+    if first % 2 == 0 { Some(*first) } else { None }
+}
+```
+
+Farklı error tiplerini `?` ile karıştırırken dikkatli olun:
+
+```rust
+// ÇALIŞMAZ — farklı error tipleri
+fn broken() -> Result<String, io::Error> {
+    let parsed: u32 = "42".parse()?;  // ParseIntError, io::Error değil
+    Ok(parsed.to_string())
+}
+
+// ÇÖZÜM — From implementasyonu
+#[derive(Debug)]
+struct AppError(Box<dyn std::error::Error>);
+
+impl From<std::io::Error> for AppError { /* ... */ }
+impl From<std::num::ParseIntError> for AppError { /* ... */ }
+
+fn works() -> Result<String, AppError> {
+    let parsed: u32 = "42".parse()?;
+    Ok(parsed.to_string())
+}
+```
+
+## Custom Error Tipleri
+
+Küçük script'lerde `Box<dyn Error>` yeterlidir; büyük projelerde kendi error tiplerinizi tanımlamanız gerekir.
+
+### std::error::Error Implementasyonu
+
+Rust'ın standart hata trait'i:
+
+```rust
+pub trait Error: Debug + Display {
+    fn source(&self) -> Option<&(dyn Error + 'static)> { None }
+}
+```
+
+Elle implementasyon:
+
+```rust
+use std::fmt;
+
+#[derive(Debug)]
+pub enum ParseError {
+    InvalidFormat { field: String, value: String },
+    MissingField(String),
+    IoError(std::io::Error),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormat { field, value } => {
+                write!(f, "invalid format for field '{field}': '{value}'")
+            }
+            Self::MissingField(name) => write!(f, "missing required field: {name}"),
+            Self::IoError(e) => write!(f, "I/O error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IoError(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ParseError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
+    }
+}
+```
+
+Bu boilerplate her hata tipi için aynıdır. İşte bu yüzden **thiserror** vardır.
+
+### thiserror Crate
+
+`thiserror` derive macro'u ile yukarıdaki kodun aynısı:
+
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("invalid format for field '{field}': '{value}'")]
+    InvalidFormat { field: String, value: String },
+
+    #[error("missing required field: {0}")]
+    MissingField(String),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+}
+```
+
+`#[error("...")]` → `Display`
+`#[error(transparent)]` → `source()` ve `Display`'i içteki hataya yönlendirir
+`#[from]` → `From<T>` implementasyonu
+
+**thiserror, library code'lar için standarttır.** Bir kütüphane yazıyorsanız, hata tiplerinizi `thiserror::Error` ile tanımlayın.
+
+### Error Enum'ları
+
+Hata enum'ları iki desende gelir:
+
+**1. Tek seviyeli (düz enum):** Her varyant kendi hatasını taşır.
+
+```rust
+#[derive(Error, Debug)]
+pub enum DbError {
+    #[error("connection failed: {0}")]
+    Connection(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("query failed: {0}")]
+    Query(#[from] sqlx::Error),
+
+    #[error("not found: {0}")]
+    NotFound(String),
+}
+```
+
+**2. İç içe (kapsüllü):** Tek bir `Internal` varyantı tüm altyapı hatalarını sarar.
+
+```rust
+#[derive(Error, Debug)]
+pub enum ServiceError {
+    #[error("{0}")]
+    Internal(#[from] InternalError),
+
+    #[error("validation: {0}")]
+    Validation(String),
+
+    #[error("not found")]
+    NotFound,
+}
+
+#[derive(Error, Debug)]
+pub enum InternalError {
+    #[error("db: {0}")]
+    Db(#[from] sqlx::Error),
+    #[error("cache: {0}")]
+    Cache(#[from] redis::RedisError),
+}
+```
+
+Her iki desen de geçerlidir. Hangisini seçeceğiniz, hata soyutlama seviyenize bağlıdır.
+
+## Error Context
+
+Hata zinciri (error chain) bir hata oluştuğunda "neyin başarısız olduğunu" değil, "neyi yaparken başarısız olduğunu" söyler.
+
+```text
+error: failed to read config file
+  caused by: No such file or directory (os error 2)
+```
+
+Bu zinciri oluşturmak için **anyhow** crate'i kullanılır.
+
+### anyhow Crate
+
+`anyhow` bir error type ve bir context trait'i sağlar. Error handling boilerplate'ini ortadan kaldırır.
+
+```rust
+use anyhow::{Context, Result};
+
+fn process_file(path: &str) -> Result<()> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file at {path}"))?;
+
+    let parsed: Config = toml::from_str(&content)
+        .context("failed to parse config file")?;
+
+    Ok(())
+}
+```
+
+### `.context()` vs `.with_context()`
+
+| Metod | Ne zaman kullanılır |
+|-------|---------------------|
+| `.context(msg)` | String mesajınız hazırsa |
+| `.with_context(\|\| format!(...))` | Lazy — sadece hata durumunda çalışır |
+
+```rust
+// KÖTÜ: context string'i her seferinde allocate ediyor
+let data = fetch_data(id).context(format!("fetching data for {id}"))?;
+
+// İYİ: with_context sadece hata varsa çalışır
+let data = fetch_data(id).with_context(|| format!("fetching data for {id}"))?;
+```
+
+### thiserror vs anyhow
+
+Bu iki crate farklı seviyelerde çalışır:
+
+```text
+┌─────────────────────────────┬──────────────────────────────┐
+│ thiserror                   │ anyhow                       │
+├─────────────────────────────┼──────────────────────────────┤
+│ Library code için           │ Application code için        │
+│ Tanımlı, somut error tipleri│ Dinamik, context eklenebilir │
+│ Kullanıcıya hatayı detaylı  │ Hızlı prototip, binary       │
+│   bildirmek istediğinizde   │   projeler                   │
+│ Enum varyantları            │ Box<dyn Error>               │
+│ No dependency (derive only) │ Full error chain             │
+└─────────────────────────────┴──────────────────────────────┘
+```
+
+**Kural**: Library'de `thiserror`, app'te `anyhow`. Bir library, `pub` API'sinde `anyhow::Result` dönmez.
+
+## Hata Yönetimi Stratejileri
+
+### Katmanlı Hata Yönetimi
+
+Bir uygulamada hata katmanları şöyle işler:
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  HTTP API    │ ──▶ │  Service     │ ──▶ │  Repository  │
+│ (anyhow)     │     │ (thiserror)  │     │ (thiserror)  │
+│              │     │              │     │              │
+│ presentation │     │ business     │     │ persistence  │
+│ layer        │     │ logic        │     │ layer        │
+└──────────────┘     └──────────────┘     └──────────────┘
+```
+
+- **Persistence layer**: SQLx/Redis'ten gelen hataları `RepositoryError` enum'ına dönüştürür (thiserror)
+- **Service layer**: Business logic hatalarını `ServiceError` olarak tanımlar, `RepositoryError`'u kapsüller
+- **HTTP API layer**: `anyhow` kullanır, hataları HTTP status code ve JSON response'a dönüştürür
+
+```rust
+// Repository katmanı
+#[derive(Error, Debug)]
+pub enum RepositoryError {
+    #[error("not found: {entity}::{id}")]
+    NotFound { entity: String, id: String },
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
+// Service katmanı
+#[derive(Error, Debug)]
+pub enum ServiceError {
+    #[error("user not found")]
+    UserNotFound,
+    #[error(transparent)]
+    Internal(#[from] RepositoryError),
+}
+
+// API katmanı — anyhow kullanır
+async fn get_user_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<User>, AppHttpError> {
+    let user = state.user_service
+        .get_user(id)
+        .await
+        .context("failed to get user")?;
+    Ok(Json(user))
+}
+```
+
+### Error Source Chain
+
+`source()` metodu ile hata zincirinde gezinmek:
+
+```rust
+fn report_chain(err: &(dyn std::error::Error)) {
+    eprintln!("error: {err}");
+    let mut source = err.source();
+    while let Some(cause) = source {
+        eprintln!("  caused by: {cause}");
+        source = cause.source();
+    }
+}
+```
+
+### Hataları Ignore Etme
+
+Her hata ele alınmak zorunda değildir. Sadece durumun önemli olduğu kadar:
+
+```rust
+// Log at, ama akışı durdurma
+if let Err(e) = metrics::record_request_duration(start.elapsed()) {
+    tracing::warn!("failed to record metrics: {e}");
+}
+```
+
+Unutmayın: `let _ = expr` değeri düşürür, `let _err = expr` ise düşürmeden uyarı verir. Eğer bir hatayı bilerek yok sayıyorsanız, bunu bir yorumla veya log'la belirtin.
+
+## Production Pattern'leri
+
+### Web Servislerinde Structured Error Response
+
+```rust
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+    request_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
+}
+
+impl Into<ErrorResponse> for ServiceError {
+    fn into(self) -> ErrorResponse {
+        match self {
+            Self::UserNotFound => ErrorResponse {
+                error: "user_not_found".to_string(),
+                request_id: Uuid::nil(),
+                details: None,
+            },
+            Self::Validation { field, reason } => ErrorResponse {
+                error: "validation_error".to_string(),
+                request_id: Uuid::nil(),
+                details: Some(serde_json::json!({
+                    "field": field,
+                    "reason": reason,
+                })),
+            },
+            _ => ErrorResponse {
+                error: "internal_error".to_string(),
+                request_id: Uuid::nil(),
+                details: None,
+            },
+        }
+    }
+}
+```
+
+### Error Metrics
+
+Prometheus metrikleri ile hata takibi:
+
+```rust
+fn track_error(err: &ServiceError) {
+    let label = match err {
+        ServiceError::Validation { .. } => "validation",
+        ServiceError::UserNotFound => "not_found",
+        ServiceError::Internal(_) => "internal",
+        ServiceError::RateLimited { .. } => "rate_limited",
+    };
+    ERROR_COUNTER.with_label_values(&[label]).inc();
+}
+```
+
+### Retry ve Backoff
+
+Geçici hatalar (transient errors) yeniden denenebilir. Kalıcı hatalar (permanent errors) denenmez.
+
+```rust
+use backoff::ExponentialBackoff;
+use backoff::future::retry;
+
+async fn fetch_with_retry(url: &str) -> anyhow::Result<Response> {
+    let op = || async {
+        let resp = reqwest::get(url).await.map_err(|e| {
+            if e.is_timeout() || e.is_connect() {
+                backoff::Error::Transient(e)
+            } else {
+                backoff::Error::Permanent(e)
+            }
+        })?;
+
+        if resp.status().is_server_error() {
+            return Err(backoff::Error::Transient(
+                anyhow::anyhow!("server error: {}", resp.status())
+            ));
+        }
+
+        Ok(resp)
+    };
+
+    let backoff = ExponentialBackoff::default();
+    retry(backoff, op).await
+}
+```
+
+### Circuit Breaker
+
+Tekrarlayan hatalarda sistemi korumak için:
+
+```rust
+use circuit_breaker::{CircuitBreaker, State};
+
+async fn call_with_cb(cb: &CircuitBreaker, f: impl AsyncFnOnce() -> Result<Data, Error>) {
+    if cb.state() == State::Open {
+        return Err(Error::CircuitOpen("service degraded, circuit is open".into()));
+    }
+
+    match f().await {
+        Ok(data) => {
+            cb.record_success();
+            Ok(data)
+        }
+        Err(e) => {
+            cb.record_failure();
+            Err(e)
+        }
+    }
+}
+```
+
+## Yaygın Hatalar
+
+### 1. `.ok()` ile Hata Yutmak
+
+```rust
+// KÖTÜ: hata sessizce yutuldu
+let data = fetch_data().ok()?;  // Err ise None, ne olduğu belli değil
+
+// İYİ: en azından log
+let data = fetch_data().inspect_err(|e| tracing::warn!("fetch_data failed: {e}")).ok()?;
+
+// DAHA İYİI: hatayı içeren bir context ver
+let data = fetch_data().context("fetching initial data")?;
+```
+
+### 2. API'lerde `Box<dyn Error>` (Anti-pattern)
+
+```rust
+// KÖTÜ — library API'sinde
+pub fn parse(input: &str) -> Result<ParseResult, Box<dyn Error>>;
+
+// İYİ — library API'sinde somut tip
+pub fn parse(input: &str) -> Result<ParseResult, ParseError>;
+```
+
+`Box<dyn Error>` kullanıcıya neyin yanlış gittiğini söylemez. match edilemez. Bir library'in API'sinde kullanıcının hatayı programatik olarak ele alması gerekir — bunun için somut bir type gerekir.
+
+**Ne zaman kullanılır?** Sadece binary/app'lerde, `anyhow::Error` zaten `Box<dyn Error>`'dır, onu kullanın.
+
+### 3. Send + Sync Implemente Etmemek
+
+Async runtime'lar hataları thread'ler arası taşıyabilir:
+
+```rust
+// KÖTÜ: tokio::spawn içinde kullanılamaz
+#[derive(Error, Debug)]
+pub struct MyError(String);  // Send + Sync değil
+
+// İYİ
+#[derive(Error, Debug)]
+pub struct MyError(String);  // String zaten Send + Sync
+
+// Eğer raw pointer vs. içeriyorsa:
+#[derive(Error, Debug)]
+pub struct MyError(Box<dyn std::error::Error + Send + Sync>);
+```
+
+Kural: Error tipleriniz her zaman `Send + Sync` olsun. `thiserror` derive'ı varsayılan olarak bunu yapmaz, eklemeniz gerekmez — tüm alanlar `Send + Sync` ise enum da öyledir.
+
+### 4. Library Kodunda panic
+
+```rust
+// KÖTÜ — ben kullananı uyarayım diyorum
+pub fn parse(input: &str) -> ParsedData {
+    if input.is_empty() {
+        panic!("parse: input cannot be empty");
+    }
+    // ...
+}
+
+// İYI — hatayı return et
+pub fn parse(input: &str) -> Result<ParsedData, ParseError> {
+    if input.is_empty() {
+        return Err(ParseError::EmptyInput);
+    }
+    // ...
+}
+```
+
+Bir library asla kullanıcısına panic fırlatmaz. Panic sadece programcı hatasıdır — library kullanıcısı bir programcı hatası yaptıysa `unwrap()` çağıran odur, library değil.
+
+## Özet
+
+Rust'ta hata yönetimi bir kütüphane seçimi değil, mimari bir karardır:
+
+| Karar | Ne zaman |
+|-------|----------|
+| `Option` | Değer olmayabilir, bu normal |
+| `Result` | İşlem başarısız olabilir |
+| `panic!` | Programcı hatası, kurtarılamaz |
+| `unwrap()` | Test/prototype, production'da asla |
+| `thiserror` | Library hata tipleri |
+| `anyhow` | Application error handling |
+| `?` | Error propagasyonu |
+| `context()` / `with_context()` | Hata zincirine anlam katmak |
+
+Unutmayın: `Result<T, E>` sadece bir enum'dur. `?` sadece bir operatördür. Rust'ın hata yönetimini güçlü yapan, dilin type system'i ile hataları birinci sınıf yurttaş yapmasıdır. Exception'lar kontrol akışını gizlerken, Rust hataları görünür, elle tutulur ve programatik olarak ele alınabilir kılar.

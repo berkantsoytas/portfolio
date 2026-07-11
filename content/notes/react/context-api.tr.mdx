@@ -1,0 +1,36 @@
+---
+title: "Context API Kullanımı"
+---
+
+## Temel Yapı
+
+```tsx
+import { createContext, useContext } from "react";
+
+const ThemeContext = createContext<Theme>("dark");
+
+function App() {
+  return (
+    <ThemeContext.Provider value="light">
+      <Child />
+    </ThemeContext.Provider>
+  );
+}
+
+function Child() {
+  const theme = useContext(ThemeContext);
+  return <div>{theme}</div>;
+}
+```
+
+## Ne Zaman Kullanmalı?
+
+- Tema, locale, auth gibi global state'ler için
+- Prop drilling'i önlemek için
+- Sık değişen state'ler için **redux/zustand** daha iyi
+
+## Performans İpuçları
+
+- Provider'ı mümkün olduğunca aşağıya koy
+- State'i `useMemo` ile sarmala
+- Büyük object'ler yerine拆分context

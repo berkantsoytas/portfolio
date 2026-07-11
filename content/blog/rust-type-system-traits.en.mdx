@@ -1,0 +1,254 @@
+---
+title: "Rust Type System: Traits, Generics, and Zero-Cost Abstractions"
+date: "2026-07-24"
+tags: ["rust", "type-system", "architecture", "systems"]
+excerpt: "Rust's type system is its superpower — from traits and generics to associated types, marker traits, and the type-state pattern that encodes invariants at compile time."
+---
+
+## Introduction
+
+Rust's type system is the engine behind memory safety without a GC, fearless
+concurrency, and zero-cost abstractions. The compiler uses type information to
+elide allocations, inline calls, eliminate branches, and prove correctness at
+compile time — generating machine code that competes with hand-written C.
+
+This post is for engineers familiar with type systems in other languages who want
+to understand Rust's trade-offs and production patterns.
+
+---
+
+## Traits
+
+### Definition and Implementation
+
+Traits are Rust's alternative to interfaces and type classes.
+
+```rust
+trait Persistent {
+    fn save(&self) -> Result<(), Error>;
+    fn load(id: &str) -> Result<Self, Error> where Self: Sized;
+}
+```
+
+Implementations are **always explicit** — no implicit conformance. The **orphan
+rule** prevents ambiguity: you can implement a trait for a type only if at least
+one of the two is local to your crate.
+
+### Bounds and Where Clauses
+
+```rust
+fn persist<T: Persistent>(item: &T) -> Result<(), Error>;    // Inline
+fn persist<T>(item: &T) -> Result<(), Error>                  // Where clause
+where T: Persistent + Debug + 'static, T::Error: Send;
+```
+
+Where clauses keep signatures readable with complex bounds.
+
+### Derive Macros
+
+`#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]` generates concrete
+impl blocks — not reflection, indistinguishable from hand-written code.
+
+### Default Implementations and Supertraits
+
+Traits can provide default method bodies (overridable, no inheritance). Supertraits
+(`trait A: B + C`) form a DAG with no downcasting or dynamic dispatch.
+
+---
+
+## Generics and Monomorphization
+
+Rust generics are parameterized over types, lifetimes, and const values. Each
+combination produces a separately monomorphized implementation.
+
+```rust
+struct Pair<T, U> { first: T, second: U }
+fn swap<T, U>(p: Pair<T, U>) -> Pair<U, T>;
+```
+
+**The trade-off:** code bloat. A generic used with ten types produces ten copies.
+LLVM's ThinLTO helps, but bloat matters in embedded contexts.
+
+`impl Trait` in argument position is sugar for a generic parameter. In **return
+position**, it hides the concrete type — useful for closures, iterator chains, and
+opaque APIs.
+
+Const generics parameterize over compile-time values:
+
+```rust
+struct Array<T, const N: usize> { data: [T; N] }
+```
+
+---
+
+## Trait Objects
+
+### `dyn Trait` vs Generics
+
+| Mechanism | Dispatch | Size known | Use case |
+|-----------|----------|------------|----------|
+| Generic | Static (monomorphized) | Call site | Hot paths |
+| `impl Trait` | Static | Call site | Opaque returns |
+| `dyn Trait` | Dynamic (vtable) | Unknown (fat ptr) | Heterogeneous collections |
+
+### Object Safety
+
+A trait is object-safe only if it doesn't require `Self: Sized`, has no methods
+using `Self` in argument/return position (except receivers), and no generic methods.
+
+```rust
+trait Cloneable: Sized { fn clone(&self) -> Self; } // NOT object-safe
+trait Callable { fn call(&self); }                  // Object-safe
+```
+
+### Overhead and Use Cases
+
+`dyn Trait` adds one pointer load + indirect call. Negligible in I/O-bound code,
+measurable in tight loops. Use for heterogeneous collections, plugin systems,
+event loops — anywhere implementations are dynamic.
+
+---
+
+## Associated Types vs Generics
+
+```rust
+pub trait Iterator { type Item; fn next(&mut self) -> Option<Self::Item>; }
+```
+
+Each type implements `Iterator` with exactly one `Item`. A generic version
+(`Iterator<T>`) would allow multiple implementations per type, creating ambiguity.
+
+**Use associated types** when the type is inherent to the contract (Iterator →
+Item, Future → Output). **Use generics** when the type varies per call or you need
+multiple implementations.
+
+---
+
+## Marker Traits
+
+Marker traits have no methods — they attach semantic properties checked at compile
+time with zero runtime cost.
+
+### Send and Sync
+
+- `Send`: transferable across threads
+- `Sync`: shareable across threads (via `&T`)
+
+Auto traits: the compiler derives them automatically. `Rc<T>` is not Send.
+`RefCell<T>` is not Sync. Incorrect `unsafe impl` causes data races.
+
+### Sized and `?Sized`
+
+Types are `Sized` by default. Unsized types (`[u8]`, `dyn Trait`) require `?Sized`
+in generic bounds. Used in trait definitions to allow trait objects.
+
+### Copy and Clone
+
+- `Clone`: explicit `.clone()` (potentially expensive)
+- `Copy`: implicit memcpy (opt-in, requires Clone, trivial types only)
+
+### PhantomData
+
+Zero-sized type that simulates ownership of a type parameter. Informs the compiler
+about variance, drop, and type relationships:
+
+```rust
+struct RawPtr<T> { ptr: *const T, _marker: PhantomData<T> }
+```
+
+---
+
+## Zero-Cost Abstractions
+
+**Principle:** what you don't use, you don't pay for. What you use, you couldn't
+hand-code better.
+
+### Iterators and Closures
+
+A combinator chain compiles to optimal linear code with no allocation or dispatch:
+
+```rust
+let sum: u32 = (0..1000).filter(|x| x % 2 == 0).map(|x| x * x).take(100).sum();
+```
+
+Each closure is a unique type. The compiler inlines the call. A closure capturing
+nothing compiles to a function pointer.
+
+### Option and Result
+
+Niche optimization eliminates overhead:
+- `Option<NonNull<T>>` is same size as `NonNull<T>` (zero is invalid)
+- `Option<bool>` fits in one byte
+- `Option<Box<T>>` is same size as `Box<T>` (null pointer optimization)
+
+No boxing, no heap allocation.
+
+### No RTTI
+
+No runtime type information, no `dynamic_cast`, no type erasure (outside opt-in
+`Any`). No hidden vtable per object (contrast with C++). Smaller binaries, no
+dispatch unless you explicitly use `dyn Trait`.
+
+---
+
+## Advanced Patterns
+
+### Type-State Pattern
+
+Encode state machine transitions in types. Invalid states are compile errors:
+
+```rust
+struct Door<State> { _state: PhantomData<State> }
+impl Door<Closed> { fn open(self) -> Door<Open>; }
+impl Door<Open> { fn close(self) -> Door<Closed>; }
+// .close() on Door<Closed> → compile error
+```
+
+Zero runtime cost. Used in network protocols, file handles, hardware drivers.
+
+### Newtype Pattern
+
+Tuple struct wrapping creates a distinct type with zero overhead:
+
+```rust
+struct Email(String); struct Meters(f64);
+```
+
+Same layout as the inner type. The type system prevents passing a bare string
+where `Email` is expected — no runtime cost.
+
+### Builder with Type-State
+
+Validate configuration at compile time:
+
+```rust
+struct ConnectionBuilder<H, P> { /* state tracked in type params */ }
+impl ConnectionBuilder<Missing, Missing> { fn new() -> Self; }
+impl ConnectionBuilder<Present, Present> { fn build(self) -> Connection; }
+// Missing required fields → compile error, not runtime panic
+```
+
+### Sealed Traits
+
+Prevent external implementations using a private supertrait:
+
+```rust
+mod private { pub trait Sealed {} }
+pub trait Command: private::Sealed { fn execute(&self); }
+```
+
+Used when the implementation set must be closed: state machines, protocol handlers,
+API versioning.
+
+---
+
+## Conclusion
+
+Rust's type system is structural, not decorative. Each feature translates directly
+to compile-time guarantees: no panics from invalid states, no data races, no
+allocation overhead from abstraction.
+
+The shift from other languages is about encoding invariants in types rather than
+comments, runtime checks, or tests. The compiler enforces them for every caller,
+every time. Type-state machines, sealed traits, newtypes, and markers are
+compile-time test suites that never flake and never slow down production.

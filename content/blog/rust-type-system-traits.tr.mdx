@@ -1,0 +1,260 @@
+---
+title: "Rust Tip Sistemi: Trait'ler, Generic'ler ve Sıfır Maliyetli Soyutlamalar"
+date: "2026-07-24"
+tags: ["rust", "type-system", "architecture", "systems"]
+excerpt: "Rust'ın tip sistemi onun süper gücü — trait'lerden generic'lere, associated type'lardan marker trait'lere ve invariant'ları compile-time'da kodlayan type-state pattern'ine kadar."
+---
+
+## Giriş
+
+Rust'ın tip sistemi diğer dillerde runtime'da kontrol edilen şeyleri compile-time'da garanti eder. Null pointer, use-after-free, data race — hepsi tip seviyesinde elenir. Üç temel prensip:
+
+**Zero-cost abstractions**: Soyutlama kullanıyorsan, kullanmadığın zamanla aynı performans. Iterator chain'ler, closure'lar, generic'ler — hepsi elle yazılmış optimal koda derlenir.
+
+**Compile-time guarantees**: Ownership, lifetime, thread-safety, state machine geçişleri — hepsi derleme anında kontrol edilir.
+
+**Expression-driven types**: `if`, `match`, `loop` — hepsi değer üretir, hepsinin tipi vardır.
+
+## Traits
+
+Trait'ler Rust'ın interface'leridir. **Kalıtım yok**, composition var.
+
+```rust
+trait Area { fn area(&self) -> f64; }
+
+struct Circle { radius: f64 }
+struct Triangle { base: f64, height: f64 }
+
+impl Area for Circle {
+    fn area(&self) -> f64 { std::f64::consts::PI * self.radius * self.radius }
+}
+impl Area for Triangle {
+    fn area(&self) -> f64 { 0.5 * self.base * self.height }
+}
+```
+
+Orphan rule: trait'i ya da tipi sen tanımlamadıysan `impl Trait for Type` yapamazsın — coherence korunur.
+
+### Trait Bound'lar ve Where Clauses
+
+```rust
+fn print_area<T: Area>(shape: &T) { ... }
+
+fn print_areas<T, U>(a: &T, b: &U)
+where
+    T: Area + Debug,
+    U: Area + Display,
+{ ... }
+```
+
+Where clauses okunabilirlik kazandırır ve associated type'ları bound'lama gibi ileri düzey kullanımlara izin verir.
+
+### Derive, Default ve Supertrait'ler
+
+`#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]` ile ortak trait'ler otomatik türetilir. Her derive kendi kurallarını uygular: `Copy` için tüm alanlar `Copy` olmalı, `Eq` reflexivity garantisi ekler.
+
+Trait'ler varsayılan metod implementasyonu tanımlayabilir. Bu sayede trait'e yeni metot eklemek backward-compatible olur.
+
+Bir trait başka bir trait'i genişletebilir (supertrait):
+
+```rust
+trait Drawable { fn draw(&self); }
+trait Clickable: Drawable { fn click(&self); }
+```
+
+`Clickable`, `Drawable`'ı da implemente eden tiplerde kullanılabilir.
+
+## Generics ve Monomorphization
+
+```rust
+struct Container<T> { value: T }
+fn id<T>(x: T) -> T { x }
+```
+
+Rust generic'leri monomorphize eder: her tip kombinasyonu için ayrı kod üretilir.
+
+```rust
+let a = id(42);    // __id_i32
+let b = id(3.14);  // __id_f64
+```
+
+**Zero-cost**: vtable yok, dynamic dispatch yok. **Maliyet**: code bloat — 50 farklı tip için 50 kopya. Kritik sistemlerde boyut kontrol edilmelidir.
+
+### impl Trait vs Generics
+
+Parametre pozisyonunda fark yok — ikisi de monomorphize edilir. Dönüş pozisyonunda `impl Trait` gerçek tipi gizler (existential type) ama tek bir somut tip döndürebilir. Farklı koşullarda farklı tipler için `Box<dyn Trait>` gerekir.
+
+### Const Generics (1.51+)
+
+```rust
+struct Array<T, const N: usize> { data: [T; N] }
+```
+
+Compile-time'da bilinen herhangi bir boyut. Dizi, matris, buffer gibi alanlarda tip güvenliği sağlar.
+
+## Trait Object'leri
+
+| Yaklaşım | Dispatch | Boyut |
+|---|---|---|
+| `fn<T: Trait>(t: T)` | Static (monomorphization) | Büyük binary |
+| `fn(t: &dyn Trait)` | Dynamic (vtable) | Tek pointer + vtable |
+| `fn(t: &impl Trait)` | Static | Generic ile aynı |
+
+dyn Trait heterojen koleksiyonlar için:
+
+```rust
+let shapes: Vec<Box<dyn Area>> = vec![
+    Box::new(Circle { radius: 1.0 }),
+    Box::new(Triangle { base: 3.0, height: 4.0 }),
+];
+```
+
+**Object safety**: dyn olarak kullanılamayan trait'ler — dönüş tipi `Self` olan, generic parametre alan veya `Sized` bound'ı olmayan trait'ler.
+
+**Vtable overhead**: pointer → vtable → fonksiyon (iki indirection). Inline edilemez. Sıcak döngülerde generics tercih edilir.
+
+## Associated Types vs Generics
+
+```rust
+trait Iterator {
+    type Item;                          // bir tip için tek bir Item
+    fn next(&mut self) -> Option<Self::Item>;
+}
+
+trait Convert<To> {                      // aynı tip, farklı dönüşümler
+    fn convert(&self) -> To;
+}
+```
+
+Karar kuralı: trait'in bir tip için tek bir doğal implementasyonu varsa associated type kullan. Aynı tipin birden fazla varyasyonu olacaksa generic parametre.
+
+## Marker Traits
+
+Hiç metodu olmayan, sadece type-level bilgi taşıyan trait'ler.
+
+### Send ve Sync
+
+```rust
+unsafe auto trait Send { }
+unsafe auto trait Sync { }
+```
+
+- `Send`: ownership thread'ler arası transfer edilebilir
+- `Sync`: `&T` birden fazla thread'de kullanılabilir
+
+`Rc<T>`: Send/Sync değil (non-atomic refcount). `Arc<T>`, `Mutex<T>`: Send + Sync. Thread-safety hataları compile-time'da yakalanır.
+
+### Sized, Copy, Clone
+
+Varsayılan olarak her tip `Sized`'dır. `?Sized` DST'ler içindir: `[u8]`, `dyn Trait`, `str`. Generic'ler varsayılan `Sized` bound'ına sahiptir.
+
+`Clone`: heap tahsisi yapabilir, açık `.clone()` gerekir. `Copy`: bitwise kopya, implicit. `Drop` ile `Copy` aynı anda var olamaz.
+
+### PhantomData
+
+Tip sistemine kullanılmayan bir tip bağımlılığını bildirir:
+
+```rust
+struct ForeignKey<T> {
+    id: u64,
+    _marker: PhantomData<T>,
+}
+```
+
+`PhantomData<T>` drop checker'a "bu tip T'ye sahiptir" der. Lifetime ve drop analizi buna göre yapılır.
+
+## Zero-Cost Abstractions
+
+```rust
+let sum: i32 = (0..100)
+    .filter(|x| x % 2 == 0)
+    .map(|x| x * x)
+    .sum();
+```
+
+Derlenince iterator chain tek bir döngü haline gelir, closure'lar inline edilir, elle yazılmış `for` döngüsüyle aynı assembly üretilir.
+
+`Option<T>` ve `Result<T, E>` sıfır runtime overhead. Niche optimization sayesinde `Option<NonNull<T>>` tek pointer boyutunda. Closure'lar `Box<dyn Fn()>` dışında heap tahsisi yapmaz.
+
+## Advanced Pattern'ler
+
+### Type-State Pattern
+
+State'leri tiplerle kodlamak:
+
+```rust
+struct Closed;
+struct Open;
+struct Door<State = Closed> { _state: PhantomData<State> }
+
+impl Door<Closed> { fn open(self) -> Door<Open> { ... } }
+impl Door<Open>   { fn close(self) -> Door<Closed> { ... } }
+```
+
+`Door<Closed>`'da `close()` derlenmez. Kapalı kapıyı kapatmak derleme hatası.
+
+### Newtype Pattern
+
+```rust
+struct UserId(u64);
+struct OrderId(u64);
+
+get_user(OrderId(42));   // derlenmez
+get_user(UserId(42));    // derlenir
+```
+
+Sıfır runtime overhead. Tek dezavantaj: içteki tipe `.0` ile erişilir.
+
+### PhantomData ile Type-Level State
+
+```rust
+struct Protocol<State> { buffer: Vec<u8>, _state: PhantomData<State> }
+struct AwaitingHandshake;
+struct Authenticated;
+struct Ready;
+
+impl Protocol<AwaitingHandshake> { fn handshake(self) -> Result<Protocol<Authenticated>, Error> { ... } }
+impl Protocol<Authenticated>     { fn prepare(self) -> Protocol<Ready> { ... } }
+impl Protocol<Ready>             { fn send(&self, data: &[u8]) { ... } }
+```
+
+Yanlış sırada mesaj göndermek compile-time'da engellenir.
+
+### Builder + Type-State
+
+Zorunlu alanları compile-time'da kontrol:
+
+```rust
+struct RequestBuilder<HasUrl, HasMethod> { ... }
+struct Yes;
+struct No;
+
+impl RequestBuilder<No, No> {
+    fn new() -> Self { ... }
+    fn with_url(self, url: &str) -> RequestBuilder<Yes, No> { ... }
+    fn with_method(self, method: &str) -> RequestBuilder<No, Yes> { ... }
+}
+impl RequestBuilder<Yes, Yes> { fn build(self) -> Request { ... } }
+```
+
+Runtime'da `unwrap()` gerektiren kontroller compile-time'a taşınır.
+
+### Sealed Traits
+
+Trait'in sadece aynı crate içinde implemente edilmesini sağlamak:
+
+```rust
+mod internal { pub trait Sealed {} }
+
+pub trait PublicTrait: internal::Sealed { fn method(&self); }
+```
+
+Dış crate'ler kullanabilir ama implemente edemez. Implementasyon seti kapalı kalır.
+
+## Sonuç
+
+Rust'ın tip sistemi, programcının niyetini compile-time'da ifade etmesini sağlar. Trait'ler ve generic'ler davranışı soyutlar, associated type'lar modeli doğal tutar, marker trait'ler thread-safety ve layout'u type-level'a taşır.
+
+Type-state, newtype ve sealed traits teknikleriyle sadece "doğru tipte" değil, "doğru durumda" kod yazılır. Hatalar runtime'da patlamaz, compile edilmez. Zero-cost abstraction sayesinde bu güvenceler performanstan ödün vermez.
+
+Rust'ın tip sistemini anlamak, onu memory-safe C alternatifi olmaktan çıkarıp **compile-time doğruluk kanıtlayıcısı** olarak kullanmaktır. Her `impl`, her generic, her marker — compiler'a "bu program şu invariant'ları sağlar" diye kanıt sunmaktır.

@@ -1,0 +1,249 @@
+---
+title: "Rust Error Handling: From panic to Production"
+date: "2026-07-23"
+tags: ["rust", "error-handling", "architecture", "systems"]
+excerpt: "Rust's error handling philosophy — why Result is not just 'error handling' but a type system feature, and how to design error strategies from small crates to large-scale systems."
+---
+
+## Introduction
+
+Rust treats errors as values, not control flow. No `throw`, no `try`/`catch` — every
+failible function declares so in its return type, and the compiler enforces every error
+path is accounted for. This shifts error handling from runtime discipline to a type-level
+contract. This post covers when to panic, how to design composable error types, and what
+patterns hold up at production scale.
+
+---
+
+## panic vs Result vs Option
+
+**When to panic.** `panic!` signals a programmer error — a contract violation that cannot
+be handled at runtime: indexing past bounds, unwrapping an infallible `Option`, or asserting
+safety in `unsafe` blocks. Library code should **never** panic in public APIs. A library
+panic forces its policy on every consumer, including long-lived servers where it tears down
+the process.
+
+```rust
+fn divide(a: i32, b: i32) -> i32 {
+    if b == 0 { panic!("division by zero") }
+    a / b
+}
+```
+
+**Option for absence, Result for failure.** `Option<T>` means a value may be absent — valid
+semantics, not failure. `Result<T, E>` encodes `Ok(T)` or `Err(E)` and the compiler forces
+you to acknowledge both. Use `Option` for map lookups, `Result` for I/O and parsing.
+
+**unwrap/expect are debugging tools.** They belong in prototypes, tests, and `main()` init.
+In production, every `unwrap()` is a landmine. Prefer `?` or pattern matching. If you must
+use `expect`, write a descriptive message.
+
+---
+
+## The ? Operator
+
+`?` is syntactic sugar for a match that returns on `Err` and unwraps on `Ok`. Rust calls
+`From::from(err)` to convert to the function's error type. This lets you mix error types
+as long as conversions exist.
+
+```rust
+fn parse_config(path: &str) -> Result<Config, ConfigError> {
+    let raw = std::fs::read_to_string(path)?;  // io::Error -> ConfigError
+    let cfg: Config = toml::from_str(&raw)?;   // toml::de::Error -> ConfigError
+    Ok(cfg)
+}
+```
+
+`?` works with `Option` (returns `None`) and in `main`/tests returning `Result`:
+
+```rust
+fn get_first(data: &[u8]) -> Option<u8> { let first = data.first()?; Some(*first) }
+fn main() -> Result<(), Box<dyn std::error::Error>> { run()?; Ok(()) }
+```
+
+Without a `From` impl, use `.map_err()`:
+
+```rust
+fs::read_to_string("port.txt").map_err(|e| format!("{e}"))?;
+```
+
+---
+
+## Custom Error Types
+
+**Implementing Error.** The `Error` trait requires `Display + Debug`. `source()` enables
+the cause chain. `Display` is user-facing; `Debug` is for developers and logs.
+
+```rust
+use std::{fmt, error::Error};
+
+#[derive(Debug)]
+pub struct ConfigError {
+    pub path: String,
+    pub source: Option<Box<dyn Error + Send + Sync>>,
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "config error at {}", self.path)
+    }
+}
+
+impl Error for ConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source.as_ref().map(|e| e.as_ref() as _)
+    }
+}
+```
+
+**thiserror.** Derive macros eliminate boilerplate. `#[from]` generates `From<T>` for
+seamless `?`. `#[source]` wires the cause chain. Enum variants let callers match and
+recover by category.
+
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ConfigError {
+    #[error("I/O: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("parse error at {path}:{line}")]
+    Parse { path: String, line: usize, #[source] source: toml::de::Error },
+    #[error("validation: {0}")]
+    Validation(String),
+}
+```
+
+---
+
+## Error Context
+
+**anyhow for application code.** `anyhow::Error` wraps any `Send + Sync + 'static` error.
+It is for binaries and services where you care about *what* went wrong with context, not the
+concrete type.
+
+```rust
+use anyhow::{Context, Result};
+
+fn deploy(version: &str) -> Result<()> {
+    let cfg = load_config().context("failed to load config")?;
+    download_artifact(version)
+        .with_context(|| format!("failed to download {version}"))?
+        .context("deployment failed")?;
+    Ok(())
+}
+```
+
+`.context()` wraps with a message. `.with_context(|| ...)` uses a closure evaluated only on
+error. The original error is preserved as `source()`.
+
+**thiserror vs anyhow — the boundary.**
+
+| Layer | Crate | Purpose |
+|-------|-------|---------|
+| Library | `thiserror` | Typed enums for caller matching |
+| Application | `anyhow` | Context wrapping, logging, reporting |
+
+Libraries export `thiserror` types. Applications wrap them with `anyhow`.
+
+---
+
+## Error Handling Strategies
+
+**Layered translation.** Each boundary translates errors into its domain language:
+
+```rust
+fn query_user(id: Uuid) -> Result<User, DbError>;                    // DB
+fn get_user(id: Uuid) -> Result<User, ServiceError> {                // Service
+    db::query_user(id).map_err(|e| ServiceError::Db { source: e })
+}
+async fn user_handler(Path(id): Path<Uuid>) -> Result<Json<User>, HttpError> {
+    Ok(Json(service::get_user(id)?))                                  // HTTP
+}
+```
+
+**Source chains.** Walk causes for diagnostics: start from `err.source()` and follow
+`Option<&dyn Error>` until `None`.
+
+**Downcasting.** Useful at the top level — `err.downcast_ref::<io::Error>()` — but a code
+smell in business logic. Prefer typed enums.
+
+**Ignoring errors.** Acceptable for best-effort ops (telemetry, caching). Always log first:
+
+```rust
+if let Err(e) = send_metrics(&batch) { log::warn!("failed: {e:?}"); }
+```
+
+Never silently swallow with `.ok()`.
+
+---
+
+## Production Patterns
+
+**HTTP error responses.** Map error types to status codes via `IntoResponse` (axum). Never
+leak internals to clients; log the full chain server-side.
+
+```rust
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let (status, msg) = match &self {
+            ApiError::NotFound { .. }      => (NOT_FOUND, "not found"),
+            ApiError::RateLimited { .. }   => (TOO_MANY_REQUESTS, "rate limited"),
+            ApiError::Internal(_)          => (INTERNAL_SERVER_ERROR, "internal error"),
+        };
+        (status, Json(json!({"error": msg}))).into_response()
+    }
+}
+```
+
+**Error metrics.** Categorise by variant, track rates per endpoint, alert on sustained
+increases:
+
+```rust
+counter!("order.failed", 1, "reason" => %e);
+```
+
+**Retry with backoff.** Use `backoff` or `tokio-retry`. Mark permanent errors to stop
+retrying:
+
+```rust
+async fn fetch(url: &str) -> Result<String, backoff::Error<reqwest::Error>> {
+    retry(ExponentialBackoff::default(), || async {
+        reqwest::get(url).await?.text().await.map_err(backoff::Error::Transient)
+    }).await
+}
+```
+
+**Tracing.** Attach structured fields for log aggregation:
+
+```rust
+#[instrument(fields(user_id = %id))]
+async fn handle(id: Uuid) -> Result<Response, AppError> {
+    // tracing-error captures span context in error reports
+}
+```
+
+---
+
+## Common Mistakes
+
+1. **Swallowing with `.ok()`** — discards the error without logging. Always log or document.
+2. **`Box<dyn Error>` in library APIs** — callers cannot match on variants. Use concrete types.
+3. **Not implementing `Send + Sync`** — fails in async context. Avoid `RefCell` in errors.
+4. **Panic in library code** — forces policy on consumers. Return `Result` instead.
+
+---
+
+## Summary
+
+Rust's error handling is a fundamentally different model from exceptions. Errors are
+first-class values, and the compiler forces a conscious choice on every failure path.
+
+- Libraries use `thiserror` for typed enums. Applications use `anyhow` for context.
+- `?` propagates concisely; `From` conversions keep types clean.
+- Production systems categorise, instrument, and recover from errors with the same rigour
+  as success paths.
+- Panic is for programmer bugs, not recoverable failures.
+
+Design your errors with intent and for the consumer. When the pager goes off at 3 AM, a
+well-structured error chain tells the full story.

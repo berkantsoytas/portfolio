@@ -1,0 +1,136 @@
+---
+title: "Cross-Chain Arbitrage Mimarisi: Steem → SBD → Upbit Pipelin'ı"
+date: "2026-07-18"
+tags: ["distributed-systems", "blockchain", "event-driven", "architecture"]
+excerpt: "Steem blokzincirinden SBD çekip Upbit'te satmak, STEEM alıp geri göndermek — bu basit görünen arbitraj sürecinin arkasındaki dağıtık sistem mimarisi."
+---
+
+## Problemin Tanımı
+
+Steem blokzincirinde SBD (Steem Blockchain Dollar) adında bir stablecoin var. Piyasada SBD arzını artırmak ve fiyat dengesini sağlamak için sistematik bir arbitraj süreci tasarladık:
+
+```
+Steem Blockchain → SBD Çek → Upbit Borsası → SBD Sat → STEEM Al → Steem'e Geri Gönder
+```
+
+Bu basit loop, altyapıda ciddi bir dağıtık sistem gerektiriyor.
+
+## Mimari
+
+### Event-Driven Pipeline
+
+Sistem tamamen event-driven mimari üzerine kurulu:
+
+```go
+type PipelineEvent struct {
+    Type    string      `json:"type"`
+    Payload interface{} `json:"payload"`
+    TraceID string      `json:"trace_id"`
+    Timestamp time.Time `json:"timestamp"`
+}
+```
+
+Her aşama bir event üretir ve bir sonraki aşama bu event'i tüketir:
+
+1. `withdrawal:requested` — Steem blockchain'den SBD çekme talebi
+2. `withdrawal:confirmed` — Çekme işlemi blockchain'de onaylandı
+3. `exchange:order_placed` — Upbit'te satış emri verildi
+4. `exchange:order_filled` — Emir dolduruldu, STEEM alındı
+5. `transfer:initiated` — STEEM tekrar Steem blockchain'e gönderildi
+
+### State Machine Tasarımı
+
+Her arbitraj döngüsü bir state machine ile yönetilir:
+
+```go
+type CycleState int
+
+const (
+    StateIdle CycleState = iota
+    StateWithdrawing
+    StateWaitingConfirmation
+    StateSelling
+    StateBuying
+    StateTransferring
+    StateCompleted
+    StateFailed
+)
+```
+
+State machine sayesinde:
+- Herhangi bir aşamada hata olursa otomatik rollback veya retry
+- Aynı anda birden fazla döngü bağımsız çalışabilir
+- Sistem crash'ten sonra state'ten devam edebilir
+
+### Concurrency Model
+
+Node.js'in event loop'u sayesinde yüzlerce arbitraj döngüsü aynı anda yönetilebiliyor:
+
+```typescript
+class ArbitrageEngine {
+    private cycles: Map<string, CycleStateMachine> = new Map();
+    private queue: Queue<ArbitrageTask>;
+
+    async processCycle(task: ArbitrageTask) {
+        const machine = new CycleStateMachine(task);
+        this.cycles.set(task.id, machine);
+
+        while (!machine.isTerminal()) {
+            const action = machine.currentAction();
+            try {
+                const result = await this.executeAction(action);
+                machine.transition(result);
+            } catch (err) {
+                machine.handleError(err);
+                await this.backoff(machine.retryCount);
+            }
+        }
+    }
+}
+```
+
+### Resilience Patterns
+
+**Circuit Breaker**: Upbit API'de rate limit veya downtime durumunda devre kesici açılır:
+
+```typescript
+const upbitBreaker = new CircuitBreaker({
+    threshold: 5,        // 5 hata sonrası açılır
+    resetTimeout: 30000, // 30sn sonra dene
+    onOpen: () => switchToFallbackExchange(),
+});
+```
+
+**Retry with Exponential Backoff**: Blockchain transaction'ları bazen gecikir veya düşer:
+
+```typescript
+async function waitForConfirmation(txId: string, maxRetries = 10) {
+    for (let i = 0; i < maxRetries; i++) {
+        const receipt = await steemNode.getTransaction(txId);
+        if (receipt.confirmed) return receipt;
+        await sleep(Math.min(1000 * Math.pow(2, i), 30000));
+    }
+    throw new Error("Transaction confirmation timeout");
+}
+```
+
+### Monitoring & Observability
+
+Her pipeline adımı için:
+
+- **Metrics**: Prometheus ile işlem süreleri, başarı/başarısızlık oranları
+- **Tracing**: OpenTelemetry ile her döngünün tam trace'i
+- **Logging**: Yapılandırılmış JSON loglar, her event trace_id ile ilişkili
+
+```
+arbitrage_cycles_total{status="completed"} 12847
+arbitrage_cycle_duration_seconds{quantile="0.99"} 45.2
+arbitrage_profit_total_usd 32450
+```
+
+## Çıkarılan Dersler
+
+1. **Blockchain işlemleri asenkron ve güvenilmezdir** — Her zaman doğrulama bekle, timeout kullan
+2. **Exchange API'leri rate-limited** — Circuit breaker ve queueing şart
+3. **State machine olmazsa olmaz** — Distributed sistemlerde state yönetimi kritik
+4. **Monitoring her şeydir** — Observability olmadan debug imkansız
