@@ -7,7 +7,7 @@
   "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
   "hero.title": "Merhaba, ben Berkant Soytaş",
   "hero.subtitle": "Yazılım Mimarı",
-  "hero.description": "Blokzincir altyapısı, dağıtık sistemler ve yüksek performanslı backend mimarileri tasarlıyorum. Go, Node.js, Rust ve Solidity ile ölçeklenebilir sistemler inşa ediyorum.",
+  "hero.description": "Düşük seviye sistemler, yüksek performanslı backend mimarileri ve altyapı araçları tasarlıyorum. Go, Rust, Node.js ve C ile performans odaklı sistemler inşa ediyorum.",
   "hero.cta": "CV'yi Görüntüle",
   "hero.secondary": "Blog'a Git",
 

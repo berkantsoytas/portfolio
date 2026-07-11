@@ -32,7 +32,7 @@ export default function TerminalHero() {
         <div className="pl-4">
           <span className="text-foreground-dim">"specialty"</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Blockchain Infrastructure"</span>
+          <span className="text-foreground">"Systems Programming"</span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
@@ -44,7 +44,7 @@ export default function TerminalHero() {
         <div className="pl-4">
           <span className="text-foreground-dim">"location"</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Istanbul, TR"</span>
+          <span className="text-foreground">"Adana, TR"</span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">

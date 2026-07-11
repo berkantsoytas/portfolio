@@ -7,7 +7,7 @@
   "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
   "hero.title": "Hi, I'm Berkant Soytaş",
   "hero.subtitle": "Software Architect",
-  "hero.description": "Designing blockchain infrastructure, distributed systems, and high-performance backend architectures. Building scalable systems with Go, Node.js, Rust, and Solidity.",
+  "hero.description": "Designing low-level systems, high-performance backend architectures, and infrastructure tooling. Building performant systems with Go, Rust, Node.js, and C.",
   "hero.cta": "View CV",
   "hero.secondary": "Go to Blog",
 

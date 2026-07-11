@@ -4,7 +4,7 @@ export async function GET() {
   const profile = {
     name: "Berkant Soytaş",
     role: "Software Architect",
-    specialty: "Blockchain Infrastructure",
+    specialty: "Systems Programming",
     location: "Adana, TR",
     status: "available for hire",
     languages: ["Go", "Node.js", "Rust", "Solidity", "TypeScript"],

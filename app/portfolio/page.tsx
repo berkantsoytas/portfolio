@@ -6,14 +6,14 @@ const experienceTR = [
   {
     period: "Oct 2021 — Jan 2026",
     title: "Software & Blockchain Engineer",
-    subtitle: "Blokfield · Istanbul",
+    subtitle: "Blokfield · Adana",
     description:
       "Node.js ve Go ile yüksek performanslı backend servisleri ve blokzincir altyapısı geliştirdim. EVM uyumlu blokzincirlerde Web3.js/Ethers.js ile otomatik trading ve arbitraj botları inşa ettim. Solidity akıllı kontratlar geliştirdim (token, DeFi). Redis ile önbellekleme, event-driven sistemler ve Kafka ile veri işleme hatları kurdum.",
   },
   {
     period: "Jul 2019 — Sep 2021",
     title: "Full Stack Developer (Intern)",
-    subtitle: "Mentalsoft · Istanbul",
+    subtitle: "Mentalsoft · Adana",
     description:
       "Kurumsal ERP ve B2B yazılım platformları geliştirdim. C# ve ASP.NET ile RESTful API'ler tasarladım. Microsoft SQL Server'da sorgu optimizasyonu ve indeksleme stratejileri uyguladım. React ve TypeScript ile önyüz geliştirdim.",
   },
@@ -23,14 +23,14 @@ const experienceEN = [
   {
     period: "Oct 2021 — Jan 2026",
     title: "Software & Blockchain Engineer",
-    subtitle: "Blokfield · Istanbul",
+    subtitle: "Blokfield · Adana",
     description:
       "Designed high-performance backend services using Node.js and Go for blockchain infrastructure and trading automation. Built automated trading and arbitrage bots interacting with EVM-compatible blockchains. Developed Solidity smart contracts for DeFi protocols. Improved performance with Redis caching, event-driven systems, and Kafka data pipelines.",
   },
   {
     period: "Jul 2019 — Sep 2021",
     title: "Full Stack Developer (Intern)",
-    subtitle: "Mentalsoft · Istanbul",
+    subtitle: "Mentalsoft · Adana",
     description:
       "Developed enterprise ERP and B2B software platforms. Designed RESTful APIs using C# and ASP.NET. Optimized MS SQL Server through indexing and query tuning. Built frontend applications using React and TypeScript.",
   },
@@ -40,7 +40,7 @@ const educationTR = [
   {
     period: "2016 — 2018",
     title: "Bilgisayar Programcılığı (Ön Lisans)",
-    subtitle: "Üniversite · Istanbul",
+    subtitle: "Üniversite · Adana",
     description:
       "2 yıllık bilgisayar programcılığı programı. Gerisi tamamen alaylı — kendi kendine öğrenme, open source projeler ve saha deneyimi ile şekillendi.",
   },
@@ -50,7 +50,7 @@ const educationEN = [
   {
     period: "2016 — 2018",
     title: "Computer Programming (Associate Degree)",
-    subtitle: "University · Istanbul",
+    subtitle: "University · Adana",
     description:
       "2-year computer programming program. The rest is self-taught — shaped by open source, hands-on experience, and building real systems.",
   },
