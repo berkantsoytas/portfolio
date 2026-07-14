@@ -20,13 +20,15 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://berkantsoytas.dev"),
   title: {
-    default: "Berkant Soytaş — Software Architect",
+    default: "Berkant Soytaş — Software Developer & Architect",
     template: "%s — Berkant Soytaş",
   },
-  description: "Portfolio, blog & knowledge base of Berkant Soytaş — software systems architect specializing in blockchain infrastructure, distributed systems, and high-performance backend architectures.",
+  description:
+    "Portfolio, blog & knowledge base of Berkant Soytaş — backend developer building reliable, scalable, and high-performance systems with Node.js, TypeScript, Go, and Rust.",
   openGraph: {
-    title: "Berkant Soytaş — Software Architect",
-    description: "Blockchain infrastructure, distributed systems, and high-performance backend architectures.",
+    title: "Berkant Soytaş — Software Developer & Architect",
+    description:
+      "Software developer building reliable, scalable, and high-performance systems with Node.js, TypeScript, Go, and Rust.",
     url: "https://berkantsoytas.dev",
     siteName: "Berkant Soytaş",
     locale: "en_US",
@@ -34,8 +36,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Berkant Soytaş — Software Architect",
-    description: "Blockchain infrastructure, distributed systems, and high-performance backend architectures.",
+    title: "Berkant Soytaş — Software Developer & Architect",
+    description:
+      "Software developer building reliable, scalable, and high-performance systems with Node.js, TypeScript, Go, and Rust.",
   },
   alternates: {
     canonical: "https://berkantsoytas.dev",

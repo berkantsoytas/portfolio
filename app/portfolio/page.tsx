@@ -5,42 +5,42 @@ import { cookies } from "next/headers";
 const experienceTR = [
   {
     period: "Oct 2021 — Jan 2026",
-    title: "Software & Blockchain Engineer",
-    subtitle: "Blokfield · Adana",
+    title: "Software & Blockchain Developer",
+    subtitle: "Blokfield · Remote (Güney Kore)",
     description:
-      "Node.js ve Go ile yüksek performanslı backend servisleri ve blokzincir altyapısı geliştirdim. EVM uyumlu blokzincirlerde Web3.js/Ethers.js ile otomatik trading ve arbitraj botları inşa ettim. Solidity akıllı kontratlar geliştirdim (token, DeFi). Redis ile önbellekleme, event-driven sistemler ve Kafka ile veri işleme hatları kurdum.",
+      "Web ve mobil projeler (gerçek zamanlı etkileşimli uygulamalar dahil) için ölçeklenebilir backend altyapıları tasarladım ve inşa ettim — karmaşık durum senkronizasyonu, yüksek eşzamanlılık veri akışı ve güvenilir API performansına odaklandım. Blokzincir entegre uygulamalar için backend servisleri ve otomasyon platformları geliştirdim. Teslimat süreleri, sürdürülebilirlik ve operasyonel yük temelinde monolitik ve mikroservis yapıları arasındaki mimari trade-off'ları değerlendirdim. Kafka ve Redis ile background worker'lar ve event-driven veri işleme hatları kurdum. Stratejik veritabanı tasarımı, sorgu optimizasyonu ve Node.js/Go'da eşzamanlılık yönetimi ile backend performansını optimize ettim. Merkezi protokoller için akıllı kontratlar geliştirdim ve bunları sağlam backend API'lerine güvenli şekilde bağladım.",
   },
   {
     period: "Jul 2019 — Sep 2021",
     title: "Full Stack Developer (Intern)",
-    subtitle: "Mentalsoft · Adana",
+    subtitle: "Mentalsoft · Adana, TR",
     description:
-      "Kurumsal ERP ve B2B yazılım platformları geliştirdim. C# ve ASP.NET ile RESTful API'ler tasarladım. Microsoft SQL Server'da sorgu optimizasyonu ve indeksleme stratejileri uyguladım. React ve TypeScript ile önyüz geliştirdim.",
+      "Katmanlı mimari ve sürdürülebilir kod odaklı olarak ASP.NET ve C# ile kurumsal ERP yazılımı için backend servisleri ve REST API'leri geliştirdim. Sorguları yeniden yapılandırma ve indeksleme stratejilerini iyileştirme yoluyla Microsoft SQL Server veritabanı performansını optimize ettim. Karmaşık iş mantığı ve kurumsal entegrasyonlar uygulayarak çeşitli müşteri dağıtımlarında sistem kararlılığını sağladım.",
   },
 ];
 
 const experienceEN = [
   {
     period: "Oct 2021 — Jan 2026",
-    title: "Software & Blockchain Engineer",
-    subtitle: "Blokfield · Adana",
+    title: "Software & Blockchain Developer ",
+    subtitle: "Blokfield · Remote (South Korea)",
     description:
-      "Designed high-performance backend services using Node.js and Go for blockchain infrastructure and trading automation. Built automated trading and arbitrage bots interacting with EVM-compatible blockchains. Developed Solidity smart contracts for DeFi protocols. Improved performance with Redis caching, event-driven systems, and Kafka data pipelines.",
+      "Designed and built scalable backend infrastructures for web and mobile projects (including real-time interactive applications), focusing on complex state synchronization, high-concurrency data flow, and reliable API performance. Developed backend services and automation platforms for blockchain-integrated applications. Evaluated architectural trade-offs, selecting monolithic or microservice structures based on delivery timelines, maintainability, and operational overhead. Implemented background workers and event-driven data pipelines using Kafka and Redis to handle asynchronous workloads and reduce latency. Optimized backend performance through strategic database design, query tuning, and concurrency management in Node.js and Go. Engineered and integrated smart contracts for decentralized protocols, connecting them securely to robust backend APIs.",
   },
   {
     period: "Jul 2019 — Sep 2021",
     title: "Full Stack Developer (Intern)",
-    subtitle: "Mentalsoft · Adana",
+    subtitle: "Mentalsoft · Adana, TR",
     description:
-      "Developed enterprise ERP and B2B software platforms. Designed RESTful APIs using C# and ASP.NET. Optimized MS SQL Server through indexing and query tuning. Built frontend applications using React and TypeScript.",
+      "Developed backend services and REST APIs for enterprise ERP software using ASP.NET and C#, focusing on layered architecture and maintainable code. Optimized Microsoft SQL Server database performance by restructuring queries and improving indexing strategies. Implemented complex business logic and enterprise integrations, ensuring system stability across diverse client deployments.",
   },
 ];
 
 const educationTR = [
   {
-    period: "2016 — 2018",
+    period: "Sept 2021 — June 2023",
     title: "Bilgisayar Programcılığı (Ön Lisans)",
-    subtitle: "Üniversite · Adana",
+    subtitle: "Çukurova Üniversitesi · Adana, TR",
     description:
       "2 yıllık bilgisayar programcılığı programı. Gerisi tamamen alaylı — kendi kendine öğrenme, open source projeler ve saha deneyimi ile şekillendi.",
   },
@@ -48,9 +48,9 @@ const educationTR = [
 
 const educationEN = [
   {
-    period: "2016 — 2018",
+    period: "Sept 2021 — June 2023",
     title: "Computer Programming (Associate Degree)",
-    subtitle: "University · Adana",
+    subtitle: "Cukurova University · Adana, TR",
     description:
       "2-year computer programming program. The rest is self-taught — shaped by open source, hands-on experience, and building real systems.",
   },
@@ -60,27 +60,78 @@ const skillCategories = [
   {
     key: "skill_languages",
     title: "Languages",
-    items: ["Go", "TypeScript", "JavaScript", "Rust", "Solidity", "C#", "Python"],
+    items: [
+      "Node.js",
+      "TypeScript",
+      "Go",
+      "Rust",
+      "C#",
+      "Python",
+      "Solidity",
+      "JavaScript",
+    ],
   },
   {
     key: "skill_backend",
     title: "Backend & Systems",
-    items: ["Node.js", "Express.js", "NestJS", "ASP.NET", "Microservices", "REST APIs", "Distributed Systems", "Event-Driven Architecture"],
+    items: [
+      "Node.js",
+      "Express.js",
+      "NestJS",
+      "ASP.NET",
+      "REST APIs",
+      "WebSockets",
+      "JWT",
+      "OAuth",
+      "Clean Architecture",
+      "DDD",
+      "MVC",
+      "Microservices",
+      "Distributed Systems",
+      "Event-Driven Architecture",
+    ],
   },
   {
     key: "skill_blockchain",
     title: "Blockchain & Web3",
-    items: ["Smart Contracts", "DeFi Protocols", "EVM", "Web3.js", "Ethers.js", "Blockchain Bots", "On-chain Data"],
+    items: [
+      "Smart Contracts",
+      "DeFi Protocols",
+      "EVM",
+      "Web3.js",
+      "Ethers.js",
+      "Blockchain Bots",
+      "On-chain Data",
+    ],
   },
   {
     key: "skill_databases",
     title: "Databases",
-    items: ["PostgreSQL", "MongoDB", "MySQL", "MSSQL", "SQLite", "Redis", "Database Design", "Query Optimization"],
+    items: [
+      "PostgreSQL",
+      "MySQL",
+      "Microsoft SQL Server",
+      "MSSQL",
+      "MongoDB",
+      "SQLite",
+      "Redis",
+      "Database Design",
+      "Query Optimization",
+    ],
   },
   {
     key: "skill_devops",
     title: "Infrastructure & DevOps",
-    items: ["Docker", "Kubernetes", "CI/CD", "Git", "Linux", "Nginx"],
+    items: [
+      "Docker",
+      "Kubernetes",
+      "Terraform",
+      "CI/CD",
+      "Git",
+      "Linux",
+      "Nginx",
+      "GitHub",
+    ],
   },
   {
     key: "skill_messaging",
@@ -200,9 +251,10 @@ export default async function PortfolioPage() {
   const cookieStore = await cookies();
   const locale = (cookieStore.get("locale")?.value ?? "tr") as "tr" | "en";
 
-  const dict = locale === "tr"
-    ? (await import("@/lib/dictionaries/tr.json")).default
-    : (await import("@/lib/dictionaries/en.json")).default;
+  const dict =
+    locale === "tr"
+      ? (await import("@/lib/dictionaries/tr.json")).default
+      : (await import("@/lib/dictionaries/en.json")).default;
 
   const experience = locale === "tr" ? experienceTR : experienceEN;
   const education = locale === "tr" ? educationTR : educationEN;
@@ -212,7 +264,8 @@ export default async function PortfolioPage() {
     <div className="py-8">
       <div className="mb-12">
         <p className="font-mono text-sm text-foreground-dim mb-2">
-          <span className="text-foreground-dim">$</span> {dict["portfolio.subtitle"]}
+          <span className="text-foreground-dim">$</span>{" "}
+          {dict["portfolio.subtitle"]}
         </p>
         <h1 className="text-2xl font-mono font-semibold text-foreground">
           {dict["portfolio.title"]}
@@ -222,24 +275,39 @@ export default async function PortfolioPage() {
       {/* Contact card — terminal style */}
       <div className="mb-12 rounded-lg border border-border overflow-hidden">
         <div className="px-4 py-2 bg-surface-alt/50 border-b border-border">
-          <span className="text-xs font-mono text-foreground-dim">~/.contact</span>
+          <span className="text-xs font-mono text-foreground-dim">
+            ~/.contact
+          </span>
         </div>
         <div className="p-4 font-mono text-xs space-y-2">
           <div className="flex items-center gap-3">
             <span className="text-foreground-dim w-16 shrink-0">email</span>
-            <a href="mailto:mailtoberkant@gmail.com" className="text-foreground hover:opacity-70 transition-opacity">
+            <a
+              href="mailto:mailtoberkant@gmail.com"
+              className="text-foreground hover:opacity-70 transition-opacity"
+            >
               mailtoberkant@gmail.com
             </a>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-foreground-dim w-16 shrink-0">github</span>
-            <a href="https://github.com/berkantsoytas" target="_blank" rel="noopener noreferrer" className="text-foreground hover:opacity-70 transition-opacity">
+            <a
+              href="https://github.com/berkantsoytas"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-foreground hover:opacity-70 transition-opacity"
+            >
               github.com/berkantsoytas
             </a>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-foreground-dim w-16 shrink-0">linkedin</span>
-            <a href="https://linkedin.com/in/berkantsoytas" target="_blank" rel="noopener noreferrer" className="text-foreground hover:opacity-70 transition-opacity">
+            <a
+              href="https://linkedin.com/in/berkantsoytas"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-foreground hover:opacity-70 transition-opacity"
+            >
               linkedin.com/in/berkantsoytas
             </a>
           </div>
@@ -253,7 +321,9 @@ export default async function PortfolioPage() {
           </div>
           <div className="flex items-center gap-3 pt-2 border-t border-border mt-2">
             <span className="text-foreground-dim w-16 shrink-0">status</span>
-            <span className="text-green-400 font-medium">● available for hire</span>
+            <span className="text-green-400 font-medium">
+              ● available for hire
+            </span>
           </div>
         </div>
       </div>
@@ -274,7 +344,8 @@ export default async function PortfolioPage() {
               {skillCategories.map((cat) => (
                 <div key={cat.key}>
                   <h4 className="font-mono text-[11px] text-foreground-dim uppercase tracking-wider mb-2">
-                    {(dict as Record<string, string>)[`portfolio.${cat.key}`] ?? cat.title}
+                    {(dict as Record<string, string>)[`portfolio.${cat.key}`] ??
+                      cat.title}
                   </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {cat.items.map((skill) => (

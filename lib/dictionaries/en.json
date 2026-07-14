@@ -6,8 +6,8 @@
 
   "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
   "hero.title": "Hi, I'm Berkant Soytaş",
-  "hero.subtitle": "Software Architect",
-  "hero.description": "Designing low-level systems, high-performance backend architectures, and infrastructure tooling. Building performant systems with Go, Rust, Node.js, and C.",
+  "hero.subtitle": "Software Developer & Architect",
+  "hero.description": "Curiosity-driven backend developer building reliable, scalable, and high-performance systems. Primarily Node.js, TypeScript, and Go — selectively Rust for performance-critical parts. Focused on event-driven architectures, Clean Architecture, and pragmatic system design.",
   "hero.cta": "View CV",
   "hero.secondary": "Go to Blog",
 
