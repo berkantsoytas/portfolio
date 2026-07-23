@@ -5,7 +5,7 @@
   "nav.notes": "Notlar",
 
   "hero.command": "curl -s https://berkantsoytas.dev/api/profile",
-  "hero.title": "Merhaba, ben Berkant Soytaş",
+  "hero.title": "Merhaba, ben Berkant Soytas",
   "hero.subtitle": "Yazılım Geliştiricisi/Mimarı",
   "hero.description": "Merak odaklı, güvenilir, ölçeklenebilir ve yüksek performanslı sistemler inşa eden backend geliştiricisi. Temel olarak Node.js, TypeScript ve Go — performans açısından kritik parçalar için seçmeli olarak Rust. Event-driven mimariler, Clean Architecture ve pragmatik sistem tasarımı odaklı.",
   "hero.cta": "CV'yi Görüntüle",

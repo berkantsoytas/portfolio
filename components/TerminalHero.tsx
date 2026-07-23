@@ -18,49 +18,53 @@ export default function TerminalHero() {
           <span className="text-foreground-dim">{`{`}</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"name"</span>
+          <span className="text-foreground-dim">&quot;name&quot;</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Berkant Soytaş"</span>
+          <span className="text-foreground">&quot;Berkant Soytaş&quot;</span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"role"</span>
+          <span className="text-foreground-dim">&quot;role&quot;</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Software Architect"</span>
+          <span className="text-foreground">
+            &quot;Software Developer & Architect&quot;
+          </span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"specialty"</span>
+          <span className="text-foreground-dim">&quot;specialty&quot;</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Systems Programming"</span>
+          <span className="text-foreground">
+            &quot;Backend Infrastructure Developer&quot;
+          </span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"status"</span>
+          <span className="text-foreground-dim">&quot;status&quot;</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-green-400">"open to work"</span>
+          <span className="text-green-400">&quot;open to work&quot;</span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"location"</span>
+          <span className="text-foreground-dim">&quot;location&quot;</span>
           <span className="text-foreground-dim">: </span>
-          <span className="text-foreground">"Adana, TR"</span>
+          <span className="text-foreground">&quot;Adana, TR&quot;</span>
           <span className="text-foreground-dim">,</span>
         </div>
         <div className="pl-4">
-          <span className="text-foreground-dim">"stack"</span>
+          <span className="text-foreground-dim">&quot;stack&quot;</span>
           <span className="text-foreground-dim">: [</span>
-          <span className="text-foreground">"Go"</span>
+          <span className="text-foreground">&quot;Go&quot;</span>
           <span className="text-foreground-dim">, </span>
-          <span className="text-foreground">"Node.js"</span>
+          <span className="text-foreground">&quot;Node.js&quot;</span>
           <span className="text-foreground-dim">, </span>
-          <span className="text-foreground">"Rust"</span>
+          <span className="text-foreground">&quot;Rust&quot;</span>
           <span className="text-foreground-dim">, </span>
-          <span className="text-foreground">"Solidity"</span>
+          <span className="text-foreground">&quot;Solidity&quot;</span>
           <span className="text-foreground-dim">, </span>
-          <span className="text-foreground">"Kafka"</span>
+          <span className="text-foreground">&quot;Kafka&quot;</span>
           <span className="text-foreground-dim">, </span>
-          <span className="text-foreground">"Redis"</span>
+          <span className="text-foreground">&quot;Redis&quot;</span>
           <span className="text-foreground-dim">]</span>
         </div>
         <div>
@@ -84,7 +88,9 @@ export default function TerminalHero() {
 
       <div className="flex items-center gap-2 mb-8">
         <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-        <span className="text-xs font-mono text-green-400">available for hire</span>
+        <span className="text-xs font-mono text-green-400">
+          available for hire
+        </span>
       </div>
 
       <div className="flex flex-wrap gap-3">
